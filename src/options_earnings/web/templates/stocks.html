@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Stocks{% endblock %}
+{% set qs_base = 'size=' ~ size ~ '&q=' ~ (q|urlencode) ~ '&min_mcap=' ~ (min_mcap_input|urlencode) ~ '&earnings_from=' ~ (earnings_from|urlencode) ~ '&earnings_to=' ~ (earnings_to|urlencode) ~ '&iv_monitored=' ~ (iv_monitored|urlencode) %}
+{% macro hdr(label, key) %}
+    {% set d = next_dir if sort == key else 'asc' %}
+    <th><a href="/?page=1&{{ qs_base }}&sort={{ key }}&dir={{ d }}">{{ label }}{% if sort == key %} ({{ dir }}){% endif %}</a></th>
+{% endmacro %}
+{% block content %}
+<h1>Stocks ({{ total }})</h1>
+<form action="/" method="get" class="filters" style="margin-bottom:.75em;">
+    <label>Search: <input type="text" name="q" value="{{ q }}" placeholder="symbol or company"></label>
+    <label>Min Mkt Cap: <input type="text" name="min_mcap" value="{{ min_mcap_input }}" placeholder="e.g. 10B, 500M"></label>
+    <label>Earnings from: <input type="date" name="earnings_from" value="{{ earnings_from }}"></label>
+    <label>to: <input type="date" name="earnings_to" value="{{ earnings_to }}"></label>
+    <label>IV Monitored:
+        <select name="iv_monitored">
+            <option value="" {% if not iv_monitored %}selected{% endif %}>any</option>
+            <option value="yes" {% if iv_monitored == 'yes' %}selected{% endif %}>yes</option>
+            <option value="no" {% if iv_monitored == 'no' %}selected{% endif %}>no</option>
+        </select>
+    </label>
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="dir" value="{{ dir }}">
+    <input type="hidden" name="size" value="{{ size }}">
+    <button type="submit">Apply</button>
+    {% if q or min_mcap_input or earnings_from or earnings_to or iv_monitored %}<a href="/?sort={{ sort }}&dir={{ dir }}&size={{ size }}">Clear</a>{% endif %}
+</form>
+<form action="/jobs" method="post">
+<table>
+    <thead>
+        <tr>
+            <th><input type="checkbox" id="select-all" title="Select all on this page"></th>
+            {{ hdr('Symbol', 'symbol') }}
+            {{ hdr('Company', 'company_name') }}
+            {{ hdr('Last', 'last_price') }}
+            {{ hdr('Mkt Cap', 'market_cap') }}
+            {{ hdr('ATM IV', 'atm_iv') }}
+            <th>IV Monitored</th>
+            {{ hdr('Earnings', 'next_earnings') }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr>
+            <td><input type="checkbox" name="symbols" value="{{ r.symbol }}"></td>
+            <td>{{ r.symbol }}</td>
+            <td>{{ r.company_name }}</td>
+            <td>{{ '%.2f'|format(r.last_price) if r.last_price is not none else '' }}</td>
+            <td>{{ r.market_cap|human_mcap }}</td>
+            <td>{% if r.atm_iv is not none %}{{ '%.1f'|format(r.atm_iv * 100) }}%{% endif %}</td>
+            <td style="text-align:center;">{% if r.iv_monitored %}<span title="monitored" style="color:#0a0;">&#10003;</span>{% else %}<span style="color:#ccc;">&ndash;</span>{% endif %}</td>
+            <td>{{ r.next_earnings or '' }}{% if r.earnings_when %} ({{ r.earnings_when }}){% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<div style="margin-top:.5em;">
+    <button type="submit">Follow Option Chain</button>
+    <button type="submit" formaction="/monitor-iv">Monitor IV</button>
+    <button type="submit" formaction="/monitor-iv/stop">Stop Monitor</button>
+</div>
+</form>
+<script>
+document.getElementById('select-all').addEventListener('change', function(e) {
+    document.querySelectorAll('input[type="checkbox"][name="symbols"]').forEach(cb => { cb.checked = e.target.checked; });
+});
+</script>
+<div class="pagination">
+    {% if page > 1 %}<a href="/?page={{ page - 1 }}&{{ qs_base }}&sort={{ sort }}&dir={{ dir }}">Prev</a>{% else %}<span>Prev</span>{% endif %}
+    | page {{ page }} of {{ total_pages }} |
+    {% if page < total_pages %}<a href="/?page={{ page + 1 }}&{{ qs_base }}&sort={{ sort }}&dir={{ dir }}">Next</a>{% else %}<span>Next</span>{% endif %}
+</div>
+{% endblock %}

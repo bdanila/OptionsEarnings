@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} chain{% endblock %}
+{% block content %}
+<h1>{{ symbol }} chain (job {{ job.job_id }})</h1>
+<p><a href="/jobs/{{ job.job_id }}">Back to job</a> | <a href="/symbols/{{ symbol }}/iv-history">IV history</a>
+{% if underlying is not none %} | underlying {{ '%.2f'|format(underlying) }}{% endif %}</p>
+
+<h2>Last 8 earnings moves</h2>
+<p>
+    Next earnings: <b>{{ next_earnings or 'n/a' }}</b>
+    &middot; Chain expiry: <b>{{ chosen_expiry or 'n/a' }}</b>
+    &middot; Gap: <b>{{ window_days }} day{{ 's' if window_days != 1 else '' }}</b>
+    {% if not next_earnings %} <span style="color:#888">(no upcoming earnings on file; using 3-day default)</span>{% endif %}
+</p>
+{% if recent_moves %}
+<table>
+    <thead><tr>
+        <th>Earnings date</th>
+        <th>Close before ($)</th>
+        <th>High {{ window_days }}d after ($, %)</th>
+        <th>Low {{ window_days }}d after ($, %)</th>
+        <th>Close {{ window_days }}d after ($, %)</th>
+    </tr></thead>
+    <tbody>
+    {% for m in recent_moves %}
+        <tr>
+            <td>{{ m.earnings_date }}</td>
+            <td>{{ '%.2f'|format(m.ref_close) }}</td>
+            <td>{% if m.window_high_3d is not none %}{{ '%.2f'|format(m.window_high_3d) }} <span style="color:{% if m.max_up_3d_pct >= 0 %}#0a0{% else %}#a00{% endif %}">({{ '%+.2f'|format(m.max_up_3d_pct) }}%)</span>{% endif %}</td>
+            <td>{% if m.window_low_3d is not none %}{{ '%.2f'|format(m.window_low_3d) }} <span style="color:{% if m.max_down_3d_pct >= 0 %}#0a0{% else %}#a00{% endif %}">({{ '%+.2f'|format(m.max_down_3d_pct) }}%)</span>{% endif %}</td>
+            <td>{% if m.window_close_3d is not none %}{{ '%.2f'|format(m.window_close_3d) }}{% if m.window_close_pct_3d is not none %} <span style="color:{% if m.window_close_pct_3d >= 0 %}#0a0{% else %}#a00{% endif %}">({{ '%+.2f'|format(m.window_close_pct_3d) }}%)</span>{% endif %}{% endif %}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No earnings move history yet for {{ symbol }}.</p>
+{% endif %}
+
+{% if recent_moves %}
+{% set chart_data = [] %}
+{% for m in recent_moves|reverse %}
+    {% set _ = chart_data.append({'date': m.earnings_date|string, 'up': m.max_up_3d_pct, 'down': m.max_down_3d_pct, 'close': m.window_close_pct_3d}) %}
+{% endfor %}
+{% if call_ratio_pct is not none or put_ratio_pct is not none %}
+<p style="margin-top:1em;">
+    ATM strike {{ '%.2f'|format(atm_strike) }}
+    {% if call_ratio_pct is not none %}&middot; Call Last/Strike = <b style="color:#0a0">{{ '%.2f'|format(call_ratio_pct) }}%</b>{% endif %}
+    {% if put_ratio_pct is not none %}&middot; Put Last/Strike = <b style="color:#a00">{{ '%.2f'|format(put_ratio_pct) }}%</b>{% endif %}
+</p>
+{% endif %}
+<canvas id="movesChart" width="900" height="300" style="margin-top:1em;"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+    const moveData = {{ chart_data|tojson }};
+    const callRatio = {{ call_ratio_pct if call_ratio_pct is not none else 'null' }};
+    const putRatio  = {{ put_ratio_pct  if put_ratio_pct  is not none else 'null' }};
+
+    const datasets = [
+        {
+            type: 'bar',
+            label: 'Max Up {{ window_days }}d (%)',
+            data: moveData.map(d => d.up),
+            backgroundColor: 'rgba(0, 160, 0, 0.7)',
+            borderColor: '#0a0',
+            borderWidth: 1,
+            order: 2,
+        },
+        {
+            type: 'bar',
+            label: 'Max Down {{ window_days }}d (%)',
+            data: moveData.map(d => d.down),
+            backgroundColor: 'rgba(170, 0, 0, 0.7)',
+            borderColor: '#a00',
+            borderWidth: 1,
+            order: 2,
+        },
+        {
+            type: 'bar',
+            label: 'Close {{ window_days }}d (%)',
+            data: moveData.map(d => d.close),
+            backgroundColor: 'rgba(0, 80, 200, 0.7)',
+            borderColor: '#04c',
+            borderWidth: 1,
+            order: 2,
+        },
+    ];
+    if (callRatio !== null) {
+        datasets.push({
+            type: 'line',
+            label: 'Call Last / Strike (%)',
+            data: moveData.map(() => callRatio),
+            borderColor: '#0a0',
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+            order: 1,
+        });
+    }
+    if (putRatio !== null) {
+        datasets.push({
+            type: 'line',
+            label: 'Put Last / Strike (%, mirrored)',
+            data: moveData.map(() => -putRatio),
+            borderColor: '#a00',
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+            order: 1,
+        });
+    }
+
+    new Chart(document.getElementById('movesChart').getContext('2d'), {
+        data: { labels: moveData.map(d => d.date), datasets: datasets },
+        options: {
+            responsive: false,
+            scales: {
+                y: {
+                    title: { display: true, text: '% vs close-before-earnings' },
+                    grid: { color: (ctx) => ctx.tick.value === 0 ? '#000' : '#ddd' },
+                },
+                x: { stacked: false },
+            },
+            plugins: {
+                title: { display: true, text: '{{ symbol }} earnings move ({{ window_days }} trading days) vs current ATM premium' },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(2) + '%',
+                    },
+                },
+            },
+        },
+    });
+</script>
+{% endif %}
+
+{% for block in grid %}
+<h2>Expiry {{ block.expiry }}{% if underlying is not none %} &mdash; Underlying {{ '%.2f'|format(underlying) }}{% endif %}</h2>
+<table>
+    <thead><tr>
+        <th colspan="4">Calls</th><th>Strike</th><th colspan="4">Puts</th>
+    </tr><tr>
+        <th>Bid</th><th>Ask</th><th>Last</th><th>IV</th>
+        <th></th>
+        <th>Bid</th><th>Ask</th><th>Last</th><th>IV</th>
+    </tr></thead>
+    <tbody>
+    {% for r in block.rows %}
+        {% set call = r.get('C') %}{% set put = r.get('P') %}
+        <tr>
+            <td>{{ '%.2f'|format(call.bid) if call and call.bid is not none else '' }}</td>
+            <td>{{ '%.2f'|format(call.ask) if call and call.ask is not none else '' }}</td>
+            <td>{{ '%.2f'|format(call.last) if call and call.last is not none else '' }}</td>
+            <td>{{ '%.4f'|format(call.iv_computed) if call and call.iv_computed is not none else '' }}</td>
+            <td><b>{{ '%.2f'|format(r.strike) }}</b></td>
+            <td>{{ '%.2f'|format(put.bid) if put and put.bid is not none else '' }}</td>
+            <td>{{ '%.2f'|format(put.ask) if put and put.ask is not none else '' }}</td>
+            <td>{{ '%.2f'|format(put.last) if put and put.last is not none else '' }}</td>
+            <td>{{ '%.4f'|format(put.iv_computed) if put and put.iv_computed is not none else '' }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No quotes for {{ symbol }} in this job.</p>
+{% endfor %}
+{% endblock %}

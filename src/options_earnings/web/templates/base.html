@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{% block title %}OptionsEarnings{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 1rem auto; max-width: 1100px; padding: 0 1rem; color: #222; }
+        a { color: #06c; text-decoration: none; } a:hover { text-decoration: underline; }
+        table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+        th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
+        th { background: #f4f4f4; }
+        .nav { margin-bottom: 1rem; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; background: #eee; font-size: 0.85rem; }
+        .badge-pending { background: #fff4cc; }
+        .badge-running { background: #cfe6ff; }
+        .badge-done    { background: #ccf2d6; }
+        .badge-error   { background: #ffd0d0; }
+        .pagination { margin-top: 0.75rem; }
+        form button { padding: 4px 10px; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">Stocks</a>
+        | <form action="/refresh" method="post" style="display:inline">
+            <button type="submit">Refresh data</button>
+          </form>
+    </div>
+    {% block content %}{% endblock %}
+</body>
+</html>

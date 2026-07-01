@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.job_id }}{% endblock %}
+{% block content %}
+<h1>Option Chain Job</h1>
+<p>Status: <span id="job-status" class="badge badge-{{ job.status }}">{{ job.status }}</span>
+{% if job.error %}<span style="color:#a00"> {{ job.error }}</span>{% endif %}
+</p>
+<p>Symbols: {% for s in job.symbols %}<a href="/jobs/{{ job.job_id }}/{{ s }}">{{ s }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+{% if job.status in ['pending', 'running'] %}
+<div hx-get="/jobs/{{ job.job_id }}/status" hx-trigger="every 2s" hx-target="#job-status" hx-swap="outerHTML"></div>
+{% endif %}
+{% if job.status == 'done' %}
+<h2>ATM Summary</h2>
+<table>
+    <thead><tr>
+        <th>Symbol</th><th>Expiry</th><th>Underlying</th><th>Strike</th><th>C/P</th>
+        <th>Last</th><th>IV</th>
+        <th>Last Earnings</th><th>Max Up 3d (%)</th><th>Max Down 3d (%)</th>
+    </tr></thead>
+    <tbody>
+    {% for q in atm %}
+        {% set m = moves.get(q.symbol) %}
+        <tr>
+            <td><a href="/jobs/{{ job.job_id }}/{{ q.symbol }}">{{ q.symbol }}</a></td>
+            <td>{{ q.expiry }}</td>
+            <td>{{ '%.2f'|format(q.underlying) }}</td>
+            <td>{{ '%.2f'|format(q.strike) }}</td>
+            <td>{{ q.cp }}</td>
+            <td>{{ '%.2f'|format(q.last) if q.last is not none else '' }}</td>
+            <td>{{ '%.4f'|format(q.iv_computed) if q.iv_computed is not none else ('%.4f'|format(q.iv_yahoo) if q.iv_yahoo is not none else '') }}</td>
+            <td>{{ m.earnings_date if m else '' }}</td>
+            <td style="color:{% if m and m.max_up_3d_pct >= 0 %}#0a0{% else %}#a00{% endif %}">{{ '%+.2f'|format(m.max_up_3d_pct) if m else '' }}</td>
+            <td style="color:{% if m and m.max_down_3d_pct >= 0 %}#0a0{% else %}#a00{% endif %}">{{ '%+.2f'|format(m.max_down_3d_pct) if m else '' }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}
