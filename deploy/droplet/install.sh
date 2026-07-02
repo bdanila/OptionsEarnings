@@ -46,15 +46,17 @@ mkdir -p "$DATA_DIR"
 chown -R "$APP_USER":"$APP_USER" "$DATA_DIR"
 
 echo "== 4/8 clone/update repo"
-if [[ -d "$APP_DIR/.git" ]]; then
-    sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin
-    sudo -u "$APP_USER" git -C "$APP_DIR" checkout "$BRANCH"
-    sudo -u "$APP_USER" git -C "$APP_DIR" pull --ff-only origin "$BRANCH"
-else
+if [[ ! -d "$APP_DIR/.git" ]]; then
     mkdir -p "$(dirname "$APP_DIR")"
     git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
-    chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
 fi
+# Always take ownership — the repo may have been cloned by root before
+# install.sh was invoked, which trips Git's safe.directory check when
+# subsequent commands run as $APP_USER.
+chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
+sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin
+sudo -u "$APP_USER" git -C "$APP_DIR" checkout "$BRANCH"
+sudo -u "$APP_USER" git -C "$APP_DIR" pull --ff-only origin "$BRANCH"
 
 echo "== 5/8 venv + deps"
 if [[ ! -d "$APP_DIR/.venv" ]]; then
