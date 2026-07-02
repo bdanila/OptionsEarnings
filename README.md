@@ -72,6 +72,31 @@ The IV history chart density depends on snapshot frequency. With manual runs you
 
 All tests run offline (no live yfinance/network calls). Network code is exercised via mocked fetchers.
 
+## Deploy to DigitalOcean App Platform
+
+Detection files are checked in at the repo root:
+
+- [requirements.txt](requirements.txt) — flat dependency list (plus `-e .` to install the package itself).
+- [Procfile](Procfile) — `web: uvicorn options_earnings.web.app:app --host 0.0.0.0 --port ${PORT:-8080}`.
+- [runtime.txt](runtime.txt) — pins Python 3.12.
+- [.do/app.yaml](.do/app.yaml) — App Spec with sensible env-var defaults (scheduler on, all crons set).
+
+### Steps
+
+1. Push this repo to GitHub (`git push`).
+2. In DigitalOcean → Apps → Create App → GitHub → pick `bdanila/OptionsEarnings`, branch `master`.
+3. DO detects a Python service. Accept the default (Basic XXS `$5/mo` is enough).
+4. Optionally, click *Edit Plan → Import from `.do/app.yaml`* to load env vars.
+5. Deploy. First build takes ~3-5 min (installs pandas/scipy/etc.).
+
+### Critical caveats
+
+- **Ephemeral filesystem.** DO App Platform wipes `/workspace` on every deploy. The DuckDB file (`data/options.duckdb`) is lost each time. On first boot the DB is empty; you need to trigger `POST /refresh` (or wait for scheduler ticks) to repopulate. For persistent data use a **Droplet + volume** instead, or migrate the storage layer to a managed database (Postgres / DO Spaces sync).
+- **Yahoo rate limits.** yfinance is more aggressively throttled from datacenter IPs (DO/AWS/GCP) than from residential IPs. The scheduler's hourly IV tick may see partial data. Retries and low concurrency in `refresh-missing` help.
+- **Timezone.** Cron jobs use UTC by default; `IV_MONITOR_TIMEZONE=America/New_York` in `.do/app.yaml` keeps the IV monitor aligned with NY market hours regardless of what timezone the container thinks it's in.
+- **Health check.** DO probes `GET /`; the stocks page returns 200 even with an empty DB, so health passes immediately.
+- **Cost.** Basic XXS ($5/mo) is fine for the web + scheduler. If chain refresh (~500 symbols) is too slow on that tier, bump to Basic S.
+
 ## Notes
 
 - The `symbols` table is keyed by Yahoo-style ticker (`BRK-B`, not `BRK.B`) — the Wikipedia loader normalizes this on the way in.

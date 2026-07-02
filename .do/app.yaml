@@ -1,0 +1,57 @@
+name: options-earnings
+region: nyc
+services:
+  - name: web
+    github:
+      repo: bdanila/OptionsEarnings
+      branch: master
+      deploy_on_push: true
+    source_dir: /
+    build_command: pip install --upgrade pip && pip install -r requirements.txt
+    run_command: uvicorn options_earnings.web.app:app --host 0.0.0.0 --port ${PORT:-8080}
+    environment_slug: python
+    http_port: 8080
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    health_check:
+      http_path: /
+    envs:
+      - key: DB_PATH
+        value: /workspace/data/options.duckdb
+        scope: RUN_AND_BUILD_TIME
+      - key: OPTION_CHAIN_WINDOW
+        value: "20"
+        scope: RUN_AND_BUILD_TIME
+      - key: PAGE_SIZE
+        value: "50"
+        scope: RUN_AND_BUILD_TIME
+      - key: FETCH_CHAINS_ON_REFRESH
+        value: "true"
+        scope: RUN_AND_BUILD_TIME
+      - key: LARGE_CAP_CHAIN_THRESHOLD
+        value: "200000000000"
+        scope: RUN_AND_BUILD_TIME
+      - key: SCHEDULER_ENABLED
+        value: "true"
+        scope: RUN_AND_BUILD_TIME
+      - key: SCHEDULER_CRON
+        value: "0 */1 * * 1-5"
+        scope: RUN_AND_BUILD_TIME
+      - key: SCHEDULER_WATCHLIST_DAYS_TO_EARNINGS
+        value: "14"
+        scope: RUN_AND_BUILD_TIME
+      - key: LARGE_CAP_SCHEDULER_ENABLED
+        value: "true"
+        scope: RUN_AND_BUILD_TIME
+      - key: LARGE_CAP_SCHEDULER_CRON
+        value: "0 22 * * 1-5"
+        scope: RUN_AND_BUILD_TIME
+      - key: IV_MONITOR_ENABLED
+        value: "true"
+        scope: RUN_AND_BUILD_TIME
+      - key: IV_MONITOR_CRON
+        value: "0 10-16 * * 1-5"
+        scope: RUN_AND_BUILD_TIME
+      - key: IV_MONITOR_TIMEZONE
+        value: America/New_York
+        scope: RUN_AND_BUILD_TIME
