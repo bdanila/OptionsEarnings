@@ -1,0 +1,27 @@
+[Unit]
+Description=OptionsEarnings web app (FastAPI + APScheduler)
+After=network.target
+
+[Service]
+Type=simple
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@APP_DIR@/.env
+ExecStart=@APP_DIR@/.venv/bin/uvicorn options_earnings.web.app:app --host 0.0.0.0 --port @PORT@ --workers 1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+# Give APScheduler background threads time to flush before kill
+TimeoutStopSec=30
+
+# Sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@APP_DIR@ /mnt
+
+[Install]
+WantedBy=multi-user.target
