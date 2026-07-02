@@ -16,7 +16,7 @@ echo "== git pull"
 sudo -u "$APP_USER" git -C "$APP_DIR" pull --ff-only
 
 echo "== pip install"
-sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+sudo -u "$APP_USER" bash -c "cd '$APP_DIR' && '$APP_DIR/.venv/bin/pip' install -r '$APP_DIR/requirements.txt'"
 
 echo "== systemd restart"
 systemctl restart options-earnings

@@ -63,7 +63,8 @@ if [[ ! -d "$APP_DIR/.venv" ]]; then
     sudo -u "$APP_USER" python3 -m venv "$APP_DIR/.venv"
 fi
 sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install --upgrade pip
-sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+# cd into $APP_DIR so `-e .` inside requirements.txt resolves to the app.
+sudo -u "$APP_USER" bash -c "cd '$APP_DIR' && '$APP_DIR/.venv/bin/pip' install -r '$APP_DIR/requirements.txt'"
 
 echo "== 6/8 .env"
 ENV_FILE="$APP_DIR/.env"
