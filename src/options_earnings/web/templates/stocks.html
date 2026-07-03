@@ -45,6 +45,7 @@
             {{ hdr('Last', 'last_price') }}
             {{ hdr('Min 3M %', 'min_3m_pct') }}
             {{ hdr('Max 3M %', 'max_3m_pct') }}
+            {{ hdr('Range 3M %', 'range_3m_pct') }}
             {{ hdr('Mkt Cap', 'market_cap') }}
             {{ hdr('ATM IV', 'atm_iv') }}
             <th>IV Monitored</th>
@@ -60,6 +61,7 @@
             <td>{{ '%.2f'|format(r.last_price) if r.last_price is not none else '' }}</td>
             <td style="color:{% if r.min_3m_pct is not none and r.min_3m_pct >= 0 %}#0a0{% else %}#a00{% endif %}">{% if r.min_3m_pct is not none %}{{ '%+.2f'|format(r.min_3m_pct) }}%{% endif %}</td>
             <td style="color:{% if r.max_3m_pct is not none and r.max_3m_pct >= 0 %}#0a0{% else %}#a00{% endif %}">{% if r.max_3m_pct is not none %}{{ '%+.2f'|format(r.max_3m_pct) }}%{% endif %}</td>
+            <td>{% if r.range_3m_pct is not none %}{{ '%.2f'|format(r.range_3m_pct) }}%{% endif %}</td>
             <td>{{ r.market_cap|human_mcap }}</td>
             <td>{% if r.atm_iv is not none %}{{ '%.1f'|format(r.atm_iv * 100) }}%{% endif %}</td>
             <td style="text-align:center;">{% if r.iv_monitored %}<span title="monitored" style="color:#0a0;">&#10003;</span>{% else %}<span style="color:#ccc;">&ndash;</span>{% endif %}</td>

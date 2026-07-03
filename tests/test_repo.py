@@ -208,6 +208,15 @@ def test_list_symbols_returns_3m_stats_and_can_sort(conn):
     sorted_rows, _ = repo.list_symbols(conn, sort="min_3m_pct", dir_="asc")
     assert [r.symbol for r in sorted_rows] == ["A", "B", "C"]
 
+    # Range 3M % = |min_pct| + |max_pct|. A: 20+20 = 40; B: 10+25 = 35; C: NULL
+    assert abs(by["A"].range_3m_pct - 40.0) < 1e-9
+    assert abs(by["B"].range_3m_pct - 35.0) < 1e-9
+    assert by["C"].range_3m_pct is None
+
+    # Sort by range ASC — B (35) < A (40) < C (NULL LAST)
+    r_asc, _ = repo.list_symbols(conn, sort="range_3m_pct", dir_="asc")
+    assert [r.symbol for r in r_asc] == ["B", "A", "C"]
+
 
 def test_sync_last_price_from_ohlc(conn):
     from datetime import date, timedelta

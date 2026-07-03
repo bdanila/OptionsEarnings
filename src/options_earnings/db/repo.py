@@ -34,6 +34,7 @@ class SymbolRow:
     iv_monitored: bool = False
     min_3m_pct: float | None = None
     max_3m_pct: float | None = None
+    range_3m_pct: float | None = None
 
 
 @dataclass
@@ -104,6 +105,7 @@ _SORTABLE_SYMBOL_COLS = {
     "atm_iv": "a.iv",
     "min_3m_pct": "min_3m_pct",
     "max_3m_pct": "max_3m_pct",
+    "range_3m_pct": "range_3m_pct",
 }
 
 
@@ -246,7 +248,11 @@ def list_symbols(
                     ELSE NULL END AS min_3m_pct,
                CASE WHEN s.last_price > 0 AND st.max_3m IS NOT NULL
                     THEN (st.max_3m - s.last_price) / s.last_price * 100.0
-                    ELSE NULL END AS max_3m_pct
+                    ELSE NULL END AS max_3m_pct,
+               CASE WHEN s.last_price > 0 AND st.min_3m IS NOT NULL AND st.max_3m IS NOT NULL
+                    THEN ABS((st.min_3m - s.last_price) / s.last_price * 100.0)
+                       + ABS((st.max_3m - s.last_price) / s.last_price * 100.0)
+                    ELSE NULL END AS range_3m_pct
         FROM symbols s
         LEFT JOIN atm a ON a.symbol = s.symbol
         LEFT JOIN stats_3m st ON st.symbol = s.symbol
