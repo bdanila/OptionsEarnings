@@ -209,6 +209,42 @@ def test_list_symbols_returns_3m_stats_and_can_sort(conn):
     assert [r.symbol for r in sorted_rows] == ["A", "B", "C"]
 
 
+def test_sync_last_price_from_ohlc(conn):
+    from datetime import date, timedelta
+    from options_earnings.db.repo import OHLCRow, sync_last_price_from_ohlc, upsert_ohlc
+
+    repo.upsert_symbol(conn, _sym(symbol="AIG", price=75.12))
+    repo.upsert_symbol(conn, _sym(symbol="MSFT", price=100.0))
+    repo.upsert_symbol(conn, _sym(symbol="NOOHLC", price=50.0))
+
+    today = date.today()
+    upsert_ohlc(conn, [
+        OHLCRow("AIG", today - timedelta(days=1), 78.0, 79.5, 77.0, 78.5),
+        OHLCRow("AIG", today, 78.5, 80.0, 77.5, 79.39),
+        OHLCRow("MSFT", today, 405.0, 412.0, 400.0, 410.0),
+    ])
+
+    # Sync all
+    n = sync_last_price_from_ohlc(conn)
+    assert n == 2  # AIG + MSFT
+    aig = repo.get_symbol(conn, "AIG")
+    msft = repo.get_symbol(conn, "MSFT")
+    noohlc = repo.get_symbol(conn, "NOOHLC")
+    assert aig.last_price == 79.39
+    assert msft.last_price == 410.0
+    assert noohlc.last_price == 50.0  # untouched
+
+    # Sync a subset (change AIG price, then re-sync only MSFT)
+    conn.execute("UPDATE symbols SET last_price = 12.0 WHERE symbol = 'AIG'")
+    n2 = sync_last_price_from_ohlc(conn, ["MSFT"])
+    assert n2 == 1
+    assert repo.get_symbol(conn, "AIG").last_price == 12.0  # not synced
+    assert repo.get_symbol(conn, "MSFT").last_price == 410.0
+
+    # Empty list is a no-op
+    assert sync_last_price_from_ohlc(conn, []) == 0
+
+
 def test_daily_candles_for_symbol_returns_sorted_last_n_days(conn):
     from datetime import date, timedelta
     from options_earnings.db.repo import OHLCRow, daily_candles_for_symbol, upsert_ohlc

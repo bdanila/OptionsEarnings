@@ -586,6 +586,42 @@ def latest_atm_iv_for_symbols(
     return {symbol: float(iv) for symbol, iv in rows if iv is not None}
 
 
+def sync_last_price_from_ohlc(
+    conn: duckdb.DuckDBPyConnection, symbols: list[str] | None = None
+) -> int:
+    """Refresh ``symbols.last_price`` from the most recent close in
+    ``earnings_ohlc``. If ``symbols`` is None, syncs all symbols that have
+    OHLC data. Returns the number of rows updated.
+    """
+    if symbols is not None and not symbols:
+        return 0
+    where_extra = ""
+    params: list[Any] = []
+    if symbols is not None:
+        placeholders = ", ".join(["?"] * len(symbols))
+        where_extra = f" AND symbol IN ({placeholders})"
+        params.extend(symbols)
+    rows = conn.execute(
+        f"""
+        WITH latest AS (
+            SELECT symbol,
+                   FIRST(close ORDER BY trading_day DESC) AS latest_close
+            FROM earnings_ohlc
+            WHERE close IS NOT NULL{where_extra}
+            GROUP BY symbol
+        )
+        UPDATE symbols AS s
+        SET last_price = l.latest_close,
+            refreshed_at = CURRENT_TIMESTAMP
+        FROM latest l
+        WHERE s.symbol = l.symbol
+        RETURNING s.symbol
+        """,
+        params,
+    ).fetchall()
+    return len(rows)
+
+
 def daily_candles_for_symbol(
     conn: duckdb.DuckDBPyConnection, symbol: str, days: int = 90
 ) -> list[OHLCRow]:

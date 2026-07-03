@@ -110,6 +110,9 @@ def run_daily_candles_batch(
             if rows:
                 inserted_rows += repo.upsert_ohlc(conn, rows)
             processed.append(sym)
+        # Keep symbols.last_price aligned with the newest close we just wrote.
+        if processed:
+            repo.sync_last_price_from_ohlc(conn, processed)
 
     logger.info(
         "daily candles batch: processed=%d rows=%d symbols=%s",
