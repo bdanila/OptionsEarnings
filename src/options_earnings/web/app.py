@@ -352,6 +352,40 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
             )
         return out
 
+    @app.get("/symbols/{symbol}/candles", response_class=HTMLResponse)
+    def candles_page(
+        request: Request,
+        c: Conn,
+        symbol: str,
+        days: int = 90,
+    ) -> HTMLResponse:
+        sym_row = repo.get_symbol(c, symbol)
+        if sym_row is None:
+            raise HTTPException(status_code=404, detail="symbol not found")
+        rows = repo.daily_candles_for_symbol(c, symbol, days=days)
+        candles = [
+            {
+                "time": r.trading_day.isoformat(),
+                "open": r.open,
+                "high": r.high,
+                "low": r.low,
+                "close": r.close,
+            }
+            for r in rows
+            if r.open is not None and r.high is not None
+            and r.low is not None and r.close is not None
+        ]
+        return templates.TemplateResponse(
+            request,
+            "candles.html",
+            {
+                "symbol": symbol,
+                "sym_row": sym_row,
+                "candles": candles,
+                "days": days,
+            },
+        )
+
     @app.get("/symbols/{symbol}/iv-history", response_class=HTMLResponse)
     def iv_history_page(
         request: Request,

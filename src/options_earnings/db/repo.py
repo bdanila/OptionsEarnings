@@ -586,6 +586,20 @@ def latest_atm_iv_for_symbols(
     return {symbol: float(iv) for symbol, iv in rows if iv is not None}
 
 
+def daily_candles_for_symbol(
+    conn: duckdb.DuckDBPyConnection, symbol: str, days: int = 90
+) -> list[OHLCRow]:
+    """Return OHLC rows for the last ``days`` calendar days, sorted ascending."""
+    rows = conn.execute(
+        "SELECT symbol, trading_day, open, high, low, close "
+        "FROM earnings_ohlc "
+        "WHERE symbol = ? AND trading_day >= CURRENT_DATE - ? "
+        "ORDER BY trading_day ASC",
+        [symbol, days],
+    ).fetchall()
+    return [OHLCRow(*r) for r in rows]
+
+
 def daily_candles_progress(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     """Coverage snapshot for the daily-candles ingest, used by the UI pill.
 

@@ -209,6 +209,29 @@ def test_list_symbols_returns_3m_stats_and_can_sort(conn):
     assert [r.symbol for r in sorted_rows] == ["A", "B", "C"]
 
 
+def test_daily_candles_for_symbol_returns_sorted_last_n_days(conn):
+    from datetime import date, timedelta
+    from options_earnings.db.repo import OHLCRow, daily_candles_for_symbol, upsert_ohlc
+
+    repo.upsert_symbol(conn, _sym(symbol="A"))
+    today = date.today()
+    upsert_ohlc(conn, [
+        OHLCRow("A", today - timedelta(days=200), 1.0, 2.0, 0.5, 1.5),  # old — filtered out
+        OHLCRow("A", today - timedelta(days=50), 10.0, 11.0, 9.0, 10.5),
+        OHLCRow("A", today - timedelta(days=10), 20.0, 21.0, 19.0, 20.5),
+        OHLCRow("A", today, 30.0, 31.0, 29.0, 30.5),
+    ])
+    rows = daily_candles_for_symbol(conn, "A", days=90)
+    assert [r.trading_day for r in rows] == [
+        today - timedelta(days=50),
+        today - timedelta(days=10),
+        today,
+    ]
+
+    # Different symbol → empty
+    assert daily_candles_for_symbol(conn, "MISSING", days=90) == []
+
+
 def test_daily_candles_progress(conn):
     from options_earnings.db.repo import OHLCRow, upsert_ohlc
 

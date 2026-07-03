@@ -55,7 +55,7 @@
         {% for r in rows %}
         <tr>
             <td><input type="checkbox" name="symbols" value="{{ r.symbol }}"></td>
-            <td>{{ r.symbol }}</td>
+            <td><a href="/symbols/{{ r.symbol }}/candles">{{ r.symbol }}</a></td>
             <td>{{ r.company_name }}</td>
             <td>{{ '%.2f'|format(r.last_price) if r.last_price is not none else '' }}</td>
             <td style="color:{% if r.min_3m_pct is not none and r.min_3m_pct >= 0 %}#0a0{% else %}#a00{% endif %}">{% if r.min_3m_pct is not none %}{{ '%+.2f'|format(r.min_3m_pct) }}%{% endif %}</td>

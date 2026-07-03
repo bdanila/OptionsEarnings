@@ -150,6 +150,43 @@ def test_index_renders_atm_iv_column(conn, client):
     assert "25.4%" in body
 
 
+def test_candles_page_renders_chart(conn, client):
+    from datetime import date, timedelta
+    from options_earnings.db.repo import OHLCRow
+
+    repo.upsert_symbol(conn, _sym("AAPL", price=180.0))
+    today = date.today()
+    repo.upsert_ohlc(conn, [
+        OHLCRow("AAPL", today - timedelta(days=5), 175.0, 178.0, 173.0, 176.0),
+        OHLCRow("AAPL", today - timedelta(days=1), 176.0, 181.0, 175.0, 180.0),
+    ])
+    r = client.get("/symbols/AAPL/candles")
+    assert r.status_code == 200
+    body = r.text
+    assert 'id="chart"' in body
+    assert "lightweight-charts" in body
+    assert "175.0" in body and "181.0" in body
+    assert "AAPL" in body
+
+
+def test_candles_page_no_data(conn, client):
+    repo.upsert_symbol(conn, _sym("XXX"))
+    r = client.get("/symbols/XXX/candles")
+    assert r.status_code == 200
+    assert "No candles yet" in r.text
+
+
+def test_candles_page_unknown_symbol_404(conn, client):
+    r = client.get("/symbols/NOSUCHSYM/candles")
+    assert r.status_code == 404
+
+
+def test_index_symbol_links_to_candles(conn, client):
+    repo.upsert_symbol(conn, _sym("MSFT"))
+    r = client.get("/")
+    assert 'href="/symbols/MSFT/candles"' in r.text
+
+
 def test_index_renders_3m_columns_and_progress_pill(conn, client):
     from options_earnings.db.repo import OHLCRow
 

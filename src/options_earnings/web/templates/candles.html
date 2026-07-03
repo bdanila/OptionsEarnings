@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} candles{% endblock %}
+{% block content %}
+<h1>{{ symbol }} &mdash; {{ sym_row.company_name }}</h1>
+<p style="margin-bottom:1em;">
+    <a href="/">&larr; back to stocks</a>
+    {% if sym_row.last_price is not none %} &middot; Last: <b>{{ '%.2f'|format(sym_row.last_price) }}</b>{% endif %}
+    {% if sym_row.market_cap is not none %} &middot; Mkt Cap: {{ sym_row.market_cap|human_mcap }}{% endif %}
+    {% if sym_row.next_earnings %} &middot; Next earnings: <b>{{ sym_row.next_earnings }}</b>{% endif %}
+    &middot; <a href="/symbols/{{ symbol }}/iv-history">IV history</a>
+</p>
+{% if candles %}
+<div id="chart" style="width:100%;max-width:1100px;height:520px;"></div>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+    const data = {{ candles|tojson }};
+    const container = document.getElementById('chart');
+    const chart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 520,
+        layout: { background: { color: '#fff' }, textColor: '#333' },
+        grid: { vertLines: { color: '#eee' }, horzLines: { color: '#eee' } },
+        rightPriceScale: { borderColor: '#ccc' },
+        timeScale: { borderColor: '#ccc', timeVisible: false, secondsVisible: false },
+        crosshair: { mode: 1 },
+    });
+    const series = chart.addCandlestickSeries({
+        upColor: '#0a0', downColor: '#a00',
+        borderUpColor: '#0a0', borderDownColor: '#a00',
+        wickUpColor: '#0a0', wickDownColor: '#a00',
+    });
+    series.setData(data);
+    chart.timeScale().fitContent();
+    window.addEventListener('resize', () => {
+        chart.applyOptions({ width: container.clientWidth });
+    });
+</script>
+<p style="font-size:.85em;color:#666;margin-top:.5em;">
+    {{ candles|length }} candles &middot; {{ candles[0].time }} &rarr; {{ candles[-1].time }}
+</p>
+{% else %}
+<p>No candles yet for {{ symbol }} &mdash; the daily-candles scheduler hasn't fetched this symbol yet.</p>
+{% endif %}
+{% endblock %}
