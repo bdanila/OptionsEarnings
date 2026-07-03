@@ -172,6 +172,67 @@ def test_list_symbols_filter_iv_monitored(conn):
     assert any_total == 3
 
 
+def test_list_symbols_returns_3m_stats_and_can_sort(conn):
+    from options_earnings.db.repo import OHLCRow, upsert_ohlc
+
+    # Seed 3 symbols with different last_price so pct math is easy to verify.
+    repo.upsert_symbol(conn, _sym(symbol="A", price=100.0))
+    repo.upsert_symbol(conn, _sym(symbol="B", price=200.0))
+    repo.upsert_symbol(conn, _sym(symbol="C", price=50.0))
+    # NB: no OHLC for C — should show as NULL stats.
+
+    from datetime import date
+    today = date.today()
+
+    # A: low 80, high 120  -> min_3m_pct = -20, max_3m_pct = +20
+    # B: low 180, high 250 -> min_3m_pct = -10, max_3m_pct = +25
+    upsert_ohlc(conn, [
+        OHLCRow("A", today, 90.0, 120.0, 80.0, 100.0),
+        OHLCRow("B", today, 190.0, 250.0, 180.0, 200.0),
+    ])
+
+    rows, _ = repo.list_symbols(conn, sort="symbol")
+    by = {r.symbol: r for r in rows}
+    assert abs(by["A"].min_3m_pct - (-20.0)) < 1e-9
+    assert abs(by["A"].max_3m_pct - 20.0) < 1e-9
+    assert abs(by["B"].min_3m_pct - (-10.0)) < 1e-9
+    assert abs(by["B"].max_3m_pct - 25.0) < 1e-9
+    assert by["C"].min_3m_pct is None
+    assert by["C"].max_3m_pct is None
+
+    # Sort by max_3m_pct DESC — B (25) > A (20) > C (NULL)
+    sorted_rows, _ = repo.list_symbols(conn, sort="max_3m_pct", dir_="desc")
+    assert [r.symbol for r in sorted_rows] == ["B", "A", "C"]
+
+    # Sort by min_3m_pct ASC — A (-20) < B (-10) < C (NULL LAST)
+    sorted_rows, _ = repo.list_symbols(conn, sort="min_3m_pct", dir_="asc")
+    assert [r.symbol for r in sorted_rows] == ["A", "B", "C"]
+
+
+def test_daily_candles_progress(conn):
+    from options_earnings.db.repo import OHLCRow, upsert_ohlc
+
+    repo.upsert_symbol(conn, _sym(symbol="A"))
+    repo.upsert_symbol(conn, _sym(symbol="B"))
+    repo.upsert_symbol(conn, _sym(symbol="C"))
+
+    from datetime import date, timedelta
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+
+    # A has today, B has only yesterday, C has nothing.
+    upsert_ohlc(conn, [
+        OHLCRow("A", today, 1.0, 2.0, 0.5, 1.5),
+        OHLCRow("B", yesterday, 1.0, 2.0, 0.5, 1.5),
+    ])
+
+    p = repo.daily_candles_progress(conn)
+    assert p["total"] == 3
+    assert p["with_data"] == 2
+    assert p["current"] == 1  # only A matches the max_day (today)
+    assert p["latest_day"] == today
+
+
 def test_list_symbols_returns_atm_iv_and_can_sort(conn):
     repo.upsert_symbol(conn, _sym(symbol="A", price=100.0))
     repo.upsert_symbol(conn, _sym(symbol="B", price=100.0))

@@ -7,6 +7,16 @@
 {% endmacro %}
 {% block content %}
 <h1>Stocks ({{ total }})</h1>
+{% if candles_progress and candles_progress.total %}
+{% set cp = candles_progress %}
+{% set pending = cp.total - cp.current %}
+<div style="font-size:.85em;color:#666;margin-bottom:.5em;">
+    Daily candles: <b>{{ cp.current }}</b> / {{ cp.total }} up to date
+    {% if cp.latest_day %}(latest: {{ cp.latest_day }}){% endif %}
+    {% if pending > 0 %} &middot; <span style="color:#a60;">{{ pending }} pending</span>{% endif %}
+    {% if cp.with_data < cp.total %} &middot; <span style="color:#a60;">{{ cp.total - cp.with_data }} never fetched</span>{% endif %}
+</div>
+{% endif %}
 <form action="/" method="get" class="filters" style="margin-bottom:.75em;">
     <label>Search: <input type="text" name="q" value="{{ q }}" placeholder="symbol or company"></label>
     <label>Min Mkt Cap: <input type="text" name="min_mcap" value="{{ min_mcap_input }}" placeholder="e.g. 10B, 500M"></label>
@@ -33,6 +43,8 @@
             {{ hdr('Symbol', 'symbol') }}
             {{ hdr('Company', 'company_name') }}
             {{ hdr('Last', 'last_price') }}
+            {{ hdr('Min 3M %', 'min_3m_pct') }}
+            {{ hdr('Max 3M %', 'max_3m_pct') }}
             {{ hdr('Mkt Cap', 'market_cap') }}
             {{ hdr('ATM IV', 'atm_iv') }}
             <th>IV Monitored</th>
@@ -46,6 +58,8 @@
             <td>{{ r.symbol }}</td>
             <td>{{ r.company_name }}</td>
             <td>{{ '%.2f'|format(r.last_price) if r.last_price is not none else '' }}</td>
+            <td style="color:{% if r.min_3m_pct is not none and r.min_3m_pct >= 0 %}#0a0{% else %}#a00{% endif %}">{% if r.min_3m_pct is not none %}{{ '%+.2f'|format(r.min_3m_pct) }}%{% endif %}</td>
+            <td style="color:{% if r.max_3m_pct is not none and r.max_3m_pct >= 0 %}#0a0{% else %}#a00{% endif %}">{% if r.max_3m_pct is not none %}{{ '%+.2f'|format(r.max_3m_pct) }}%{% endif %}</td>
             <td>{{ r.market_cap|human_mcap }}</td>
             <td>{% if r.atm_iv is not none %}{{ '%.1f'|format(r.atm_iv * 100) }}%{% endif %}</td>
             <td style="text-align:center;">{% if r.iv_monitored %}<span title="monitored" style="color:#0a0;">&#10003;</span>{% else %}<span style="color:#ccc;">&ndash;</span>{% endif %}</td>

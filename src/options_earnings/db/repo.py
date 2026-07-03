@@ -32,6 +32,8 @@ class SymbolRow:
     refreshed_at: datetime
     atm_iv: float | None = None
     iv_monitored: bool = False
+    min_3m_pct: float | None = None
+    max_3m_pct: float | None = None
 
 
 @dataclass
@@ -100,6 +102,8 @@ _SORTABLE_SYMBOL_COLS = {
     "next_earnings": "s.next_earnings",
     "market_cap": "s.market_cap",
     "atm_iv": "a.iv",
+    "min_3m_pct": "min_3m_pct",
+    "max_3m_pct": "max_3m_pct",
 }
 
 
@@ -119,6 +123,11 @@ _ATM_IV_CTE = """
         WHERE q.cp = 'C'
     ), atm AS (
         SELECT symbol, iv FROM ranked WHERE rk = 1
+    ), stats_3m AS (
+        SELECT symbol, MIN(low) AS min_3m, MAX(high) AS max_3m
+        FROM earnings_ohlc
+        WHERE trading_day >= CURRENT_DATE - 90
+        GROUP BY symbol
     )
 """
 
@@ -231,9 +240,16 @@ def list_symbols(
         f"""{_ATM_IV_CTE}
         SELECT s.symbol, s.company_name, s.sector, s.market_cap, s.last_price,
                s.next_earnings, s.earnings_when, s.refreshed_at, a.iv AS atm_iv,
-               COALESCE(s.iv_monitored, FALSE) AS iv_monitored
+               COALESCE(s.iv_monitored, FALSE) AS iv_monitored,
+               CASE WHEN s.last_price > 0 AND st.min_3m IS NOT NULL
+                    THEN (st.min_3m - s.last_price) / s.last_price * 100.0
+                    ELSE NULL END AS min_3m_pct,
+               CASE WHEN s.last_price > 0 AND st.max_3m IS NOT NULL
+                    THEN (st.max_3m - s.last_price) / s.last_price * 100.0
+                    ELSE NULL END AS max_3m_pct
         FROM symbols s
         LEFT JOIN atm a ON a.symbol = s.symbol
+        LEFT JOIN stats_3m st ON st.symbol = s.symbol
         {where_sql}
         ORDER BY {col} {direction} NULLS LAST, s.symbol ASC
         LIMIT ? OFFSET ?
@@ -568,6 +584,36 @@ def latest_atm_iv_for_symbols(
         [cp, *symbols, cp],
     ).fetchall()
     return {symbol: float(iv) for symbol, iv in rows if iv is not None}
+
+
+def daily_candles_progress(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Coverage snapshot for the daily-candles ingest, used by the UI pill.
+
+    "current" = symbols whose newest OHLC row equals the newest OHLC row in
+    the whole table. Self-referential so we don't need to know about weekends
+    or holidays.
+    """
+    row = conn.execute(
+        """
+        WITH max_day AS (
+            SELECT MAX(trading_day) AS d FROM earnings_ohlc
+        ), per_sym AS (
+            SELECT symbol, MAX(trading_day) AS last_day
+            FROM earnings_ohlc GROUP BY symbol
+        )
+        SELECT
+            (SELECT COUNT(*) FROM symbols) AS total,
+            (SELECT COUNT(*) FROM per_sym) AS with_data,
+            (SELECT COUNT(*) FROM per_sym p, max_day m WHERE p.last_day = m.d) AS current,
+            (SELECT d FROM max_day) AS latest_day
+        """
+    ).fetchone()
+    return {
+        "total": int(row[0] or 0),
+        "with_data": int(row[1] or 0),
+        "current": int(row[2] or 0),
+        "latest_day": row[3],
+    }
 
 
 def expiries_for_symbol(conn: duckdb.DuckDBPyConnection, symbol: str) -> list[date]:

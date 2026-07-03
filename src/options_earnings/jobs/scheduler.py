@@ -47,6 +47,18 @@ def _refresh_large_cap_chains_task(db_path: Path, threshold: float, window: int)
     log.info("scheduler: large-cap chain refresh done; %d symbols processed", n)
 
 
+def _daily_candles_task(db_path: Path, batch_size: int, lookback_days: int) -> None:
+    from options_earnings.ingest.daily_candles import run_daily_candles_batch
+    result = run_daily_candles_batch(
+        db_path, batch_size=batch_size, lookback_days=lookback_days
+    )
+    log.info(
+        "scheduler: daily candles tick — symbols=%d rows=%d weekend_skip=%s",
+        result.get("symbols", 0), result.get("rows", 0),
+        result.get("skipped_weekend", False),
+    )
+
+
 def _iv_monitor_task(db_path: Path, window: int) -> None:
     """Hourly during NY market hours: pull current IV snapshot for every
     symbol with iv_monitored=TRUE. Reuses the chain-job machinery so the
@@ -95,6 +107,20 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
             max_instances=1,
             coalesce=True,
         )
+    if settings.daily_candles_enabled:
+        scheduler.add_job(
+            _daily_candles_task,
+            trigger=CronTrigger.from_crontab(settings.daily_candles_cron, timezone="UTC"),
+            kwargs={
+                "db_path": settings.db_path,
+                "batch_size": settings.daily_candles_batch_size,
+                "lookback_days": settings.daily_candles_lookback_days,
+            },
+            id="daily_candles",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
     if settings.iv_monitor_enabled:
         scheduler.add_job(
             _iv_monitor_task,
@@ -113,10 +139,13 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
     scheduler.start()
     log.info(
         "scheduler: started; watchlist cron='%s' days=%d; large-cap cron='%s' enabled=%s "
-        "threshold=%s; iv-monitor cron='%s' tz=%s enabled=%s",
+        "threshold=%s; iv-monitor cron='%s' tz=%s enabled=%s; daily-candles cron='%s' "
+        "batch=%d lookback=%d enabled=%s",
         settings.scheduler_cron, settings.scheduler_watchlist_days_to_earnings,
         settings.large_cap_scheduler_cron, settings.large_cap_scheduler_enabled,
         settings.large_cap_chain_threshold,
         settings.iv_monitor_cron, settings.iv_monitor_timezone, settings.iv_monitor_enabled,
+        settings.daily_candles_cron, settings.daily_candles_batch_size,
+        settings.daily_candles_lookback_days, settings.daily_candles_enabled,
     )
     return scheduler

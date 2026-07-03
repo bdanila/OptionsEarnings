@@ -150,6 +150,29 @@ def test_index_renders_atm_iv_column(conn, client):
     assert "25.4%" in body
 
 
+def test_index_renders_3m_columns_and_progress_pill(conn, client):
+    from options_earnings.db.repo import OHLCRow
+
+    repo.upsert_symbol(conn, _sym("AAPL", price=100.0))
+    from datetime import date
+    today = date.today()
+    repo.upsert_ohlc(conn, [
+        OHLCRow("AAPL", today, 95.0, 120.0, 80.0, 100.0),
+    ])
+    r = client.get("/")
+    body = r.text
+    # Column headers
+    assert "Min 3M" in body
+    assert "Max 3M" in body
+    # Values: min = -20.00%, max = +20.00% (low 80 vs price 100, high 120 vs 100)
+    assert "-20.00%" in body
+    assert "+20.00%" in body
+    # Progress pill
+    assert "Daily candles" in body
+    assert "up to date" in body
+    assert str(today) in body  # latest_day shown
+
+
 def test_index_human_mcap_rendering(conn, client):
     repo.upsert_symbol(conn, _sym("MSFT", mcap=3_260_383_008_800))
     r = client.get("/?q=MSFT")

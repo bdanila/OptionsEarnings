@@ -116,6 +116,7 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
             earnings_from=earnings_from_value, earnings_to=earnings_to_value,
             iv_monitored=iv_monitored_flag,
         )
+        candles_progress = repo.daily_candles_progress(c)
         total_pages = max(1, ceil(total / size)) if size else 1
         next_dir = "desc" if dir == "asc" else "asc"
         return templates.TemplateResponse(
@@ -135,6 +136,7 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
                 "earnings_from": earnings_from_value.isoformat() if earnings_from_value else "",
                 "earnings_to": earnings_to_value.isoformat() if earnings_to_value else "",
                 "iv_monitored": iv_monitored if iv_monitored in ("yes", "no") else "",
+                "candles_progress": candles_progress,
             },
         )
 

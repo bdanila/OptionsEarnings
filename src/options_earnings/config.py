@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     iv_monitor_cron: str = "0 10-16 * * 1-5"
     iv_monitor_timezone: str = "America/New_York"
 
+    daily_candles_enabled: bool = True
+    daily_candles_cron: str = "*/10 * * * *"
+    daily_candles_batch_size: int = 10
+    daily_candles_lookback_days: int = 90
+
     web_host: str = "127.0.0.1"
     web_port: int = 8000
 
