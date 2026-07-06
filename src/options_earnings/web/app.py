@@ -46,6 +46,18 @@ def _parse_date(text: str | None) -> date | None:
         return None
 
 
+def _parse_float(text: str | None) -> float | None:
+    if text is None:
+        return None
+    s = text.strip().rstrip("%")
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 def parse_mcap_input(text: str | None) -> float | None:
     """Parse user mcap input. Accepts "10B", "1.5T", "500M", "100K", or a plain number.
 
@@ -96,6 +108,8 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
         earnings_from: str | None = None,
         earnings_to: str | None = None,
         iv_monitored: str | None = None,
+        range_3m_min: str | None = None,
+        range_3m_max: str | None = None,
     ) -> HTMLResponse:
         page = max(1, page)
         size = size or settings.page_size
@@ -110,11 +124,14 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
             iv_monitored_flag = False
         else:
             iv_monitored_flag = None
+        range_3m_min_value = _parse_float(range_3m_min)
+        range_3m_max_value = _parse_float(range_3m_max)
         rows, total = repo.list_symbols(
             c, page=page, size=size, sort=sort, dir_=dir,
             q=q_value, min_mcap=min_mcap_value,
             earnings_from=earnings_from_value, earnings_to=earnings_to_value,
             iv_monitored=iv_monitored_flag,
+            range_3m_min=range_3m_min_value, range_3m_max=range_3m_max_value,
         )
         candles_progress = repo.daily_candles_progress(c)
         total_pages = max(1, ceil(total / size)) if size else 1
@@ -136,6 +153,8 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
                 "earnings_from": earnings_from_value.isoformat() if earnings_from_value else "",
                 "earnings_to": earnings_to_value.isoformat() if earnings_to_value else "",
                 "iv_monitored": iv_monitored if iv_monitored in ("yes", "no") else "",
+                "range_3m_min": range_3m_min or "",
+                "range_3m_max": range_3m_max or "",
                 "candles_progress": candles_progress,
             },
         )

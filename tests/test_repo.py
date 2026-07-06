@@ -217,6 +217,21 @@ def test_list_symbols_returns_3m_stats_and_can_sort(conn):
     r_asc, _ = repo.list_symbols(conn, sort="range_3m_pct", dir_="asc")
     assert [r.symbol for r in r_asc] == ["B", "A", "C"]
 
+    # Filter range_3m_pct between 30 and 38 → only B (35). NULL excluded.
+    filt, total = repo.list_symbols(conn, range_3m_min=30.0, range_3m_max=38.0)
+    assert total == 1
+    assert filt[0].symbol == "B"
+
+    # Only min: 36+ → only A.
+    filt, total = repo.list_symbols(conn, range_3m_min=36.0)
+    assert total == 1
+    assert filt[0].symbol == "A"
+
+    # Only max: 38 max → only B (A above, C NULL).
+    filt, total = repo.list_symbols(conn, range_3m_max=38.0)
+    assert total == 1
+    assert filt[0].symbol == "B"
+
 
 def test_sync_last_price_from_ohlc(conn):
     from datetime import date, timedelta

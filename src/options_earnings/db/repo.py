@@ -133,6 +133,13 @@ _ATM_IV_CTE = """
     )
 """
 
+_RANGE_3M_EXPR = (
+    "(CASE WHEN s.last_price > 0 AND st.min_3m IS NOT NULL AND st.max_3m IS NOT NULL "
+    "THEN ABS((st.min_3m - s.last_price) / s.last_price * 100.0) "
+    "   + ABS((st.max_3m - s.last_price) / s.last_price * 100.0) "
+    "ELSE NULL END)"
+)
+
 
 def upsert_symbol(conn: duckdb.DuckDBPyConnection, row: SymbolRow) -> None:
     """Upsert a symbol. On conflict, fields that come in as NULL are coalesced
@@ -212,6 +219,8 @@ def list_symbols(
     earnings_from: date | None = None,
     earnings_to: date | None = None,
     iv_monitored: bool | None = None,
+    range_3m_min: float | None = None,
+    range_3m_max: float | None = None,
 ) -> tuple[list[SymbolRow], int]:
     col = _SORTABLE_SYMBOL_COLS.get(sort, "s.symbol")
     direction = "DESC" if dir_.lower() == "desc" else "ASC"
@@ -236,6 +245,12 @@ def list_symbols(
         where_parts.append("COALESCE(s.iv_monitored, FALSE) = TRUE")
     elif iv_monitored is False:
         where_parts.append("COALESCE(s.iv_monitored, FALSE) = FALSE")
+    if range_3m_min is not None:
+        where_parts.append(f"{_RANGE_3M_EXPR} >= ?")
+        where_params.append(range_3m_min)
+    if range_3m_max is not None:
+        where_parts.append(f"{_RANGE_3M_EXPR} <= ?")
+        where_params.append(range_3m_max)
     where_sql = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
     rows = conn.execute(
@@ -249,10 +264,7 @@ def list_symbols(
                CASE WHEN s.last_price > 0 AND st.max_3m IS NOT NULL
                     THEN (st.max_3m - s.last_price) / s.last_price * 100.0
                     ELSE NULL END AS max_3m_pct,
-               CASE WHEN s.last_price > 0 AND st.min_3m IS NOT NULL AND st.max_3m IS NOT NULL
-                    THEN ABS((st.min_3m - s.last_price) / s.last_price * 100.0)
-                       + ABS((st.max_3m - s.last_price) / s.last_price * 100.0)
-                    ELSE NULL END AS range_3m_pct
+               {_RANGE_3M_EXPR} AS range_3m_pct
         FROM symbols s
         LEFT JOIN atm a ON a.symbol = s.symbol
         LEFT JOIN stats_3m st ON st.symbol = s.symbol
@@ -263,7 +275,11 @@ def list_symbols(
         [*where_params, size, offset],
     ).fetchall()
     total = conn.execute(
-        f"SELECT COUNT(*) FROM symbols s{where_sql}",
+        f"""{_ATM_IV_CTE}
+        SELECT COUNT(*) FROM symbols s
+        LEFT JOIN stats_3m st ON st.symbol = s.symbol
+        {where_sql}
+        """,
         where_params,
     ).fetchone()[0]
     return [SymbolRow(*r) for r in rows], int(total)
