@@ -169,6 +169,17 @@ def test_candles_page_renders_chart(conn, client):
     assert "AAPL" in body
 
 
+def test_candles_page_has_external_links(conn, client):
+    repo.upsert_symbol(conn, _sym("WBD"))
+    r = client.get("/symbols/WBD/candles")
+    body = r.text
+    assert 'https://www.tradingview.com/chart/WrZaSQaL/?symbol=WBD' in body
+    assert 'https://seekingalpha.com/symbol/WBD' in body
+    # Both should open in new tab
+    assert 'target="_blank"' in body
+    assert 'rel="noopener noreferrer"' in body
+
+
 def test_candles_page_no_data(conn, client):
     repo.upsert_symbol(conn, _sym("XXX"))
     r = client.get("/symbols/XXX/candles")

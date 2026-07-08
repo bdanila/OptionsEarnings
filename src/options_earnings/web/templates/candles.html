@@ -8,6 +8,8 @@
     {% if sym_row.market_cap is not none %} &middot; Mkt Cap: {{ sym_row.market_cap|human_mcap }}{% endif %}
     {% if sym_row.next_earnings %} &middot; Next earnings: <b>{{ sym_row.next_earnings }}</b>{% endif %}
     &middot; <a href="/symbols/{{ symbol }}/iv-history">IV history</a>
+    &middot; <a href="https://www.tradingview.com/chart/WrZaSQaL/?symbol={{ symbol|urlencode }}" target="_blank" rel="noopener noreferrer">TradingView &rarr;</a>
+    &middot; <a href="https://seekingalpha.com/symbol/{{ symbol|urlencode }}" target="_blank" rel="noopener noreferrer">Seeking Alpha &rarr;</a>
 </p>
 {% if candles %}
 <div id="chart" style="width:100%;max-width:1100px;height:520px;"></div>
