@@ -8,6 +8,7 @@ from uuid import UUID
 import duckdb
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from options_earnings.config import get_settings
@@ -17,6 +18,10 @@ from options_earnings.db.connection import open_db
 
 def _templates_dir() -> Path:
     return Path(str(resources.files("options_earnings.web").joinpath("templates")))
+
+
+def _static_dir() -> Path:
+    return Path(str(resources.files("options_earnings.web").joinpath("static")))
 
 
 def human_mcap(value: float | int | None) -> str:
@@ -89,6 +94,9 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
     app = FastAPI(title="OptionsEarnings")
     templates = Jinja2Templates(directory=str(_templates_dir()))
     templates.env.filters["human_mcap"] = human_mcap
+    static_dir = _static_dir()
+    if static_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     def get_conn() -> duckdb.DuckDBPyConnection:
         return conn

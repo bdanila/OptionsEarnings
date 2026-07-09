@@ -169,6 +169,14 @@ def test_candles_page_renders_chart(conn, client):
     assert "AAPL" in body
 
 
+def test_favicon_link_in_head(conn, client):
+    repo.upsert_symbol(conn, _sym("AAPL"))
+    r = client.get("/")
+    body = r.text
+    assert 'rel="icon"' in body
+    assert 'href="/static/favicon.png"' in body
+
+
 def test_candles_page_has_external_links(conn, client):
     repo.upsert_symbol(conn, _sym("WBD"))
     r = client.get("/symbols/WBD/candles")
