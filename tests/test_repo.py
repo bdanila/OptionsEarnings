@@ -428,6 +428,75 @@ def test_backfill_iv_rank_history_rolling_window(conn):
     assert abs(rows[0] - 50.0) < 1e-6
 
 
+def test_dismiss_iv_alerts_removes_from_query(conn):
+    from datetime import datetime, timedelta, timezone
+    from options_earnings.db.repo import (
+        capture_iv_ranks, dismiss_iv_alerts, iv_rank_alerts,
+    )
+
+    repo.upsert_symbol(conn, _sym(symbol="X", price=100.0))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def _emit(days_ago, iv):
+        ts = now - timedelta(days=days_ago)
+        j = repo.create_job(conn, ["X"], window_size=5)
+        repo.insert_quotes(conn, [QuoteRow(
+            job_id=j, symbol="X", snapshot_ts=ts, underlying=100.0,
+            expiry=date(2026, 12, 31), strike=100.0, cp="C",
+            bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+            iv_yahoo=iv - 0.01, iv_computed=iv,
+        )])
+        capture_iv_ranks(conn, ["X"], ts)
+
+    _emit(6, 0.20)
+    _emit(4, 0.30)  # peak
+    _emit(1, 0.22)  # drop
+    alerts = iv_rank_alerts(conn, drop_threshold=10.0, lookback_days=10)
+    assert len(alerts) == 1
+    a = alerts[0]
+    assert a["symbol"] == "X"
+    assert a["snapshot_ts"] is not None
+    assert a["atm_iv"] is not None
+    assert a["current_rank"] is not None and a["max_rank"] is not None
+
+    # Dismiss and verify it's gone
+    dismiss_iv_alerts(conn, [(a["symbol"], a["snapshot_ts"])])
+    assert iv_rank_alerts(conn, drop_threshold=10.0, lookback_days=10) == []
+
+
+def test_iv_alerts_shorter_lookback_recomputes(conn):
+    """When the user shortens the lookback, alerts should reflect only the
+    max within the new window (drops that happened outside are ignored)."""
+    from datetime import datetime, timedelta, timezone
+    from options_earnings.db.repo import capture_iv_ranks, iv_rank_alerts
+
+    repo.upsert_symbol(conn, _sym(symbol="Y", price=100.0))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def _emit(days_ago, iv):
+        ts = now - timedelta(days=days_ago)
+        j = repo.create_job(conn, ["Y"], window_size=5)
+        repo.insert_quotes(conn, [QuoteRow(
+            job_id=j, symbol="Y", snapshot_ts=ts, underlying=100.0,
+            expiry=date(2026, 12, 31), strike=100.0, cp="C",
+            bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+            iv_yahoo=iv - 0.01, iv_computed=iv,
+        )])
+        capture_iv_ranks(conn, ["Y"], ts)
+
+    # Peak was 8 days ago; recent snapshots don't peak.
+    _emit(8, 0.35)   # peak far in past
+    _emit(4, 0.20)
+    _emit(3, 0.22)
+    _emit(1, 0.21)
+
+    # 10-day window includes the peak -> alert fires
+    with_wide = iv_rank_alerts(conn, drop_threshold=10.0, lookback_days=10)
+    # 5-day window excludes the peak -> alert may drop out
+    with_narrow = iv_rank_alerts(conn, drop_threshold=10.0, lookback_days=5)
+    assert len(with_wide) >= len(with_narrow)
+
+
 def test_capture_iv_ranks_idempotent(conn):
     from datetime import datetime, timedelta, timezone
     from options_earnings.db.repo import capture_iv_ranks

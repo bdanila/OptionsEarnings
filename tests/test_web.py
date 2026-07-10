@@ -169,6 +169,61 @@ def test_candles_page_renders_chart(conn, client):
     assert "AAPL" in body
 
 
+def test_dismiss_iv_alerts_endpoint(conn, client):
+    from datetime import datetime, timedelta, timezone
+    from options_earnings.db.repo import capture_iv_ranks, iv_rank_alerts
+
+    repo.upsert_symbol(conn, _sym("WAT", price=100.0))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    for days, iv in [(6, 0.20), (4, 0.30), (1, 0.22)]:
+        ts = now - timedelta(days=days)
+        j = repo.create_job(conn, ["WAT"], window_size=5)
+        repo.insert_quotes(conn, [QuoteRow(
+            job_id=j, symbol="WAT", snapshot_ts=ts, underlying=100.0,
+            expiry=date(2026, 12, 31), strike=100.0, cp="C",
+            bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+            iv_yahoo=iv - 0.01, iv_computed=iv,
+        )])
+        capture_iv_ranks(conn, ["WAT"], ts)
+
+    alerts = iv_rank_alerts(conn, drop_threshold=10.0, lookback_days=10)
+    assert len(alerts) == 1
+    a = alerts[0]
+
+    # POST dismiss
+    r = client.post(
+        "/iv-alerts/dismiss",
+        data={"alert": [f"{a['symbol']}|{a['snapshot_ts'].isoformat()}"]},
+    )
+    assert r.status_code == 303
+    assert iv_rank_alerts(conn, drop_threshold=10.0, lookback_days=10) == []
+
+
+def test_alert_lookback_query_param_reflected_in_ui(conn, client):
+    from options_earnings.db.repo import capture_iv_ranks
+    from datetime import datetime, timedelta, timezone
+    # Seed a WAT alert so the column header renders with the lookback value.
+    repo.upsert_symbol(conn, _sym("WAT", price=100.0))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for days, iv in [(3, 0.20), (2, 0.30), (1, 0.22)]:
+        ts = now - timedelta(days=days)
+        j = repo.create_job(conn, ["WAT"], window_size=5)
+        repo.insert_quotes(conn, [QuoteRow(
+            job_id=j, symbol="WAT", snapshot_ts=ts, underlying=100.0,
+            expiry=date(2026, 12, 31), strike=100.0, cp="C",
+            bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+            iv_yahoo=iv - 0.01, iv_computed=iv,
+        )])
+        capture_iv_ranks(conn, ["WAT"], ts)
+
+    r = client.get("/?alert_lookback=5")
+    body = r.text
+    assert 'value="5"' in body
+    # Column header uses the user-provided lookback
+    assert "ATM IV Max Rank (5 days)" in body
+
+
 def test_favicon_link_in_head(conn, client):
     repo.upsert_symbol(conn, _sym("AAPL"))
     r = client.get("/")

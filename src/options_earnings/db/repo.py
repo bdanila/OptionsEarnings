@@ -346,7 +346,8 @@ def iv_rank_alerts(
 ) -> list[dict[str, Any]]:
     """Return symbols where the latest IV rank has dropped by more than
     ``drop_threshold`` (percentage points) below the max IV rank observed in
-    the last ``lookback_days`` days. Ordered by largest drop first.
+    the last ``lookback_days`` days. Dismissed (symbol, snapshot_ts) entries
+    are excluded. Ordered by largest drop first.
     """
     from datetime import timedelta as _td, timezone as _tz
     cutoff = datetime.now(_tz.utc).replace(tzinfo=None) - _td(days=lookback_days)
@@ -356,7 +357,8 @@ def iv_rank_alerts(
             SELECT symbol, MAX(snapshot_ts) AS ts FROM iv_rank_history GROUP BY symbol
         ),
         current_rank AS (
-            SELECT h.symbol, h.iv_rank_2w AS current_rank, h.snapshot_ts
+            SELECT h.symbol, h.snapshot_ts, h.atm_iv,
+                   h.iv_rank_2w AS current_rank
             FROM iv_rank_history h
             JOIN latest l ON l.symbol = h.symbol AND l.ts = h.snapshot_ts
             WHERE h.iv_rank_2w IS NOT NULL
@@ -368,26 +370,56 @@ def iv_rank_alerts(
             GROUP BY symbol
         )
         SELECT c.symbol,
+               c.snapshot_ts,
+               c.atm_iv,
                c.current_rank,
                m.max_rank,
                m.max_rank - c.current_rank AS drop_pct
         FROM current_rank c
         JOIN max_window m ON m.symbol = c.symbol
+        LEFT JOIN iv_alerts_dismissed d
+            ON d.symbol = c.symbol AND d.snapshot_ts = c.snapshot_ts
         WHERE m.max_rank - c.current_rank > ?
+          AND d.symbol IS NULL
         ORDER BY drop_pct DESC
-        LIMIT 20
+        LIMIT 200
         """,
         [cutoff, drop_threshold],
     ).fetchall()
     return [
         {
             "symbol": r[0],
-            "current_rank": float(r[1]) if r[1] is not None else None,
-            "max_rank": float(r[2]) if r[2] is not None else None,
-            "drop_pct": float(r[3]) if r[3] is not None else None,
+            "snapshot_ts": r[1],
+            "atm_iv": float(r[2]) if r[2] is not None else None,
+            "current_rank": float(r[3]) if r[3] is not None else None,
+            "max_rank": float(r[4]) if r[4] is not None else None,
+            "drop_pct": float(r[5]) if r[5] is not None else None,
         }
         for r in rows
     ]
+
+
+def dismiss_iv_alerts(
+    conn: duckdb.DuckDBPyConnection,
+    entries: list[tuple[str, datetime]],
+) -> int:
+    """Insert (symbol, snapshot_ts) pairs into iv_alerts_dismissed so they're
+    filtered from future alert queries. Idempotent via ON CONFLICT.
+    """
+    if not entries:
+        return 0
+    from datetime import timezone as _tz
+    now = datetime.now(_tz.utc).replace(tzinfo=None)
+    payload = [[sym, ts, now] for sym, ts in entries]
+    conn.executemany(
+        """
+        INSERT INTO iv_alerts_dismissed (symbol, snapshot_ts, dismissed_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT (symbol, snapshot_ts) DO UPDATE SET dismissed_at = excluded.dismissed_at
+        """,
+        payload,
+    )
+    return len(payload)
 
 
 def stale_iv_monitored_symbols(

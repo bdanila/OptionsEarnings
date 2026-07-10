@@ -75,3 +75,10 @@ CREATE TABLE IF NOT EXISTS iv_rank_history (
     PRIMARY KEY (symbol, snapshot_ts)
 );
 CREATE INDEX IF NOT EXISTS ix_iv_rank_history_symbol_ts ON iv_rank_history(symbol, snapshot_ts);
+
+CREATE TABLE IF NOT EXISTS iv_alerts_dismissed (
+    symbol       VARCHAR NOT NULL,
+    snapshot_ts  TIMESTAMP NOT NULL,
+    dismissed_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (symbol, snapshot_ts)
+);
