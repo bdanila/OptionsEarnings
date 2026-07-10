@@ -59,20 +59,21 @@ def _daily_candles_task(db_path: Path, batch_size: int, lookback_days: int) -> N
     )
 
 
-def _iv_monitor_task(db_path: Path, window: int) -> None:
-    """Hourly during NY market hours: pull current IV snapshot for every
-    symbol with iv_monitored=TRUE. Reuses the chain-job machinery so the
-    existing ATM IV column auto-updates from the latest snapshot.
+def _iv_monitor_task(db_path: Path, window: int, batch_size: int) -> None:
+    """One tick of the round-robin IV monitor: pull option chains for the
+    ``batch_size`` most-stale IV-monitored symbols. Skips the earnings history
+    recompute (that data is quarterly, not hourly) so each tick makes ~3
+    yfinance calls per symbol instead of ~5.
     """
     from options_earnings.options.job import run_chain_job
     with get_conn(db_path) as conn:
-        symbols = repo.monitored_symbols(conn)
+        symbols = repo.stale_iv_monitored_symbols(conn, batch_size)
         if not symbols:
             log.info("scheduler: iv monitor — nothing monitored, skipping tick")
             return
         job_id = repo.create_job(conn, symbols, window_size=window)
     log.info("scheduler: iv monitor tick — job %s for %d symbols", job_id, len(symbols))
-    run_chain_job(db_path, job_id, window=window)
+    run_chain_job(db_path, job_id, window=window, skip_earnings_history=True)
 
 
 def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
@@ -130,6 +131,7 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
             kwargs={
                 "db_path": settings.db_path,
                 "window": settings.option_chain_window,
+                "batch_size": settings.iv_monitor_batch_size,
             },
             id="iv_monitor_hourly",
             replace_existing=True,

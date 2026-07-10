@@ -225,6 +225,30 @@ def monitored_symbols(conn: duckdb.DuckDBPyConnection) -> list[str]:
     return [r[0] for r in rows]
 
 
+def stale_iv_monitored_symbols(
+    conn: duckdb.DuckDBPyConnection, limit: int
+) -> list[str]:
+    """Return the ``limit`` most-stale IV-monitored symbols (never fetched or
+    oldest snapshot first) for round-robin IV monitor batches. Ties broken by
+    symbol alphabetically for deterministic ordering.
+    """
+    rows = conn.execute(
+        """
+        SELECT s.symbol
+        FROM symbols s
+        LEFT JOIN (
+            SELECT symbol, MAX(snapshot_ts) AS last_ts
+            FROM option_quotes GROUP BY symbol
+        ) q ON q.symbol = s.symbol
+        WHERE COALESCE(s.iv_monitored, FALSE) = TRUE
+        ORDER BY q.last_ts ASC NULLS FIRST, s.symbol ASC
+        LIMIT ?
+        """,
+        [limit],
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def list_symbols(
     conn: duckdb.DuckDBPyConnection,
     page: int = 1,

@@ -134,6 +134,34 @@ def test_list_symbols_filter_earnings_range(conn):
     assert {r.symbol for r in out} == {"PAST"}
 
 
+def test_stale_iv_monitored_symbols_orders_never_first_then_oldest(conn):
+    from datetime import datetime, timedelta, timezone
+
+    repo.upsert_symbol(conn, _sym(symbol="NEVER"))
+    repo.upsert_symbol(conn, _sym(symbol="OLD"))
+    repo.upsert_symbol(conn, _sym(symbol="RECENT"))
+    repo.upsert_symbol(conn, _sym(symbol="NOTMON"))  # not monitored, ignored
+    repo.set_iv_monitored(conn, ["NEVER", "OLD", "RECENT"], True)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    def _q(symbol, hours_ago):
+        j = repo.create_job(conn, [symbol], window_size=5)
+        return QuoteRow(
+            job_id=j, symbol=symbol, snapshot_ts=now - timedelta(hours=hours_ago),
+            underlying=100.0, expiry=date(2026, 12, 31), strike=100.0, cp="C",
+            bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+            iv_yahoo=0.24, iv_computed=0.25,
+        )
+    repo.insert_quotes(conn, [_q("OLD", 48), _q("RECENT", 1)])
+
+    stale = repo.stale_iv_monitored_symbols(conn, limit=10)
+    assert stale == ["NEVER", "OLD", "RECENT"]
+
+    assert repo.stale_iv_monitored_symbols(conn, limit=1) == ["NEVER"]
+    # NOTMON is never returned
+    assert "NOTMON" not in stale
+
+
 def test_set_iv_monitored_and_monitored_symbols(conn):
     repo.upsert_symbol(conn, _sym(symbol="AAPL"))
     repo.upsert_symbol(conn, _sym(symbol="MSFT"))

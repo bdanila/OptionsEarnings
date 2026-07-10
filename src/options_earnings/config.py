@@ -25,8 +25,9 @@ class Settings(BaseSettings):
     large_cap_scheduler_cron: str = "0 22 * * 1-5"
 
     iv_monitor_enabled: bool = True
-    iv_monitor_cron: str = "0 10-16 * * 1-5"
+    iv_monitor_cron: str = "*/10 * * * 1-5"
     iv_monitor_timezone: str = "America/New_York"
+    iv_monitor_batch_size: int = 15
 
     daily_candles_enabled: bool = True
     daily_candles_cron: str = "*/10 * * * *"

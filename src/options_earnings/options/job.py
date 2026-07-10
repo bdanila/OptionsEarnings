@@ -49,6 +49,7 @@ def run_chain_job(
     window: int,
     target_expiry: date | None = None,
     risk_free_rate: float | None = None,
+    skip_earnings_history: bool = False,
 ) -> None:
     with get_conn(db_path) as conn:
         job = get_job(conn, job_id)
@@ -82,6 +83,8 @@ def run_chain_job(
                     logger.exception("chain fetch failed for %s", symbol)
                     errors.append(f"{symbol}: {exc}")
 
+                if skip_earnings_history:
+                    continue
                 try:
                     moves, ohlc_rows = compute_recent_earnings_data(symbol, n=8)
                     for move in moves:
