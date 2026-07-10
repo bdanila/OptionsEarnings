@@ -225,6 +225,124 @@ def monitored_symbols(conn: duckdb.DuckDBPyConnection) -> list[str]:
     return [r[0] for r in rows]
 
 
+def capture_iv_ranks(
+    conn: duckdb.DuckDBPyConnection,
+    symbols: list[str],
+    snapshot_ts: datetime,
+) -> int:
+    """Persist ATM Call IV + IV rank (position vs. 14-day min/max) for the
+    given symbols at ``snapshot_ts``. Idempotent (ON CONFLICT). Called from
+    ``run_chain_job`` after ``insert_quotes`` lands the new snapshot.
+    Returns count of rows written.
+    """
+    if not symbols:
+        return 0
+    placeholders = ", ".join(["?"] * len(symbols))
+    result = conn.execute(
+        f"""
+        WITH picked AS (
+            SELECT q.symbol,
+                   COALESCE(q.iv_computed, q.iv_yahoo) AS atm_iv,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY q.symbol
+                       ORDER BY ABS(q.strike - q.underlying) ASC, q.strike ASC
+                   ) AS rk
+            FROM option_quotes q
+            WHERE q.cp = 'C'
+              AND q.snapshot_ts = ?
+              AND q.symbol IN ({placeholders})
+        ),
+        atm_now AS (
+            SELECT symbol, atm_iv FROM picked WHERE rk = 1 AND atm_iv IS NOT NULL
+        ),
+        history_ranked AS (
+            SELECT q.symbol, q.snapshot_ts,
+                   COALESCE(q.iv_computed, q.iv_yahoo) AS iv,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY q.symbol, q.snapshot_ts
+                       ORDER BY ABS(q.strike - q.underlying) ASC, q.strike ASC
+                   ) AS rk
+            FROM option_quotes q
+            WHERE q.cp = 'C'
+              AND q.snapshot_ts >= ? - INTERVAL 14 DAY
+              AND q.symbol IN ({placeholders})
+        ),
+        stats_2w AS (
+            SELECT symbol, MIN(iv) AS min_iv, MAX(iv) AS max_iv
+            FROM history_ranked
+            WHERE rk = 1 AND iv IS NOT NULL
+            GROUP BY symbol
+        )
+        INSERT INTO iv_rank_history (symbol, snapshot_ts, atm_iv, iv_rank_2w)
+        SELECT n.symbol, ? AS snapshot_ts, n.atm_iv,
+               CASE WHEN s.max_iv IS NOT NULL AND s.min_iv IS NOT NULL
+                    AND (s.max_iv - s.min_iv) > 0
+                    THEN (n.atm_iv - s.min_iv) / (s.max_iv - s.min_iv) * 100.0
+                    ELSE NULL END AS iv_rank_2w
+        FROM atm_now n
+        LEFT JOIN stats_2w s ON s.symbol = n.symbol
+        ON CONFLICT (symbol, snapshot_ts) DO UPDATE SET
+            atm_iv = excluded.atm_iv,
+            iv_rank_2w = excluded.iv_rank_2w
+        RETURNING symbol
+        """,
+        [snapshot_ts, *symbols, snapshot_ts, *symbols, snapshot_ts],
+    ).fetchall()
+    return len(result)
+
+
+def iv_rank_alerts(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    drop_threshold: float = 10.0,
+    lookback_days: int = 10,
+) -> list[dict[str, Any]]:
+    """Return symbols where the latest IV rank has dropped by more than
+    ``drop_threshold`` (percentage points) below the max IV rank observed in
+    the last ``lookback_days`` days. Ordered by largest drop first.
+    """
+    from datetime import timedelta as _td, timezone as _tz
+    cutoff = datetime.now(_tz.utc).replace(tzinfo=None) - _td(days=lookback_days)
+    rows = conn.execute(
+        """
+        WITH latest AS (
+            SELECT symbol, MAX(snapshot_ts) AS ts FROM iv_rank_history GROUP BY symbol
+        ),
+        current_rank AS (
+            SELECT h.symbol, h.iv_rank_2w AS current_rank, h.snapshot_ts
+            FROM iv_rank_history h
+            JOIN latest l ON l.symbol = h.symbol AND l.ts = h.snapshot_ts
+            WHERE h.iv_rank_2w IS NOT NULL
+        ),
+        max_window AS (
+            SELECT symbol, MAX(iv_rank_2w) AS max_rank
+            FROM iv_rank_history
+            WHERE snapshot_ts >= ? AND iv_rank_2w IS NOT NULL
+            GROUP BY symbol
+        )
+        SELECT c.symbol,
+               c.current_rank,
+               m.max_rank,
+               m.max_rank - c.current_rank AS drop_pct
+        FROM current_rank c
+        JOIN max_window m ON m.symbol = c.symbol
+        WHERE m.max_rank - c.current_rank > ?
+        ORDER BY drop_pct DESC
+        LIMIT 20
+        """,
+        [cutoff, drop_threshold],
+    ).fetchall()
+    return [
+        {
+            "symbol": r[0],
+            "current_rank": float(r[1]) if r[1] is not None else None,
+            "max_rank": float(r[2]) if r[2] is not None else None,
+            "drop_pct": float(r[3]) if r[3] is not None else None,
+        }
+        for r in rows
+    ]
+
+
 def stale_iv_monitored_symbols(
     conn: duckdb.DuckDBPyConnection, limit: int
 ) -> list[str]:

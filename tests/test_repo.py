@@ -344,6 +344,79 @@ def test_daily_candles_progress(conn):
     assert p["latest_day"] == today
 
 
+def test_capture_iv_ranks_and_alerts(conn):
+    """End-to-end: quotes -> capture_iv_ranks -> iv_rank_history persisted;
+    iv_rank_alerts flags symbols whose latest rank dropped > threshold."""
+    from datetime import datetime, timedelta, timezone
+    from options_earnings.db.repo import capture_iv_ranks, iv_rank_alerts
+
+    repo.upsert_symbol(conn, _sym(symbol="WAT", price=100.0))
+    repo.upsert_symbol(conn, _sym(symbol="CALM", price=100.0))  # stable, no alert
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def _emit(symbol, days_ago, iv):
+        ts = now - timedelta(days=days_ago)
+        j = repo.create_job(conn, [symbol], window_size=5)
+        repo.insert_quotes(conn, [QuoteRow(
+            job_id=j, symbol=symbol, snapshot_ts=ts, underlying=100.0,
+            expiry=date(2026, 12, 31), strike=100.0, cp="C",
+            bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+            iv_yahoo=iv - 0.01, iv_computed=iv,
+        )])
+        capture_iv_ranks(conn, [symbol], ts)
+
+    # WAT: rank goes 0 -> 100 (peak) -> 30 (current, big drop).
+    _emit("WAT", days_ago=8, iv=0.20)
+    _emit("WAT", days_ago=6, iv=0.30)
+    _emit("WAT", days_ago=1, iv=0.23)
+
+    # CALM: rank barely moves (0 -> 100 -> 95).
+    _emit("CALM", days_ago=8, iv=0.40)
+    _emit("CALM", days_ago=6, iv=0.50)
+    _emit("CALM", days_ago=1, iv=0.495)
+
+    # Verify persistence
+    rows = conn.execute(
+        "SELECT symbol, atm_iv, iv_rank_2w FROM iv_rank_history "
+        "ORDER BY symbol, snapshot_ts"
+    ).fetchall()
+    assert len(rows) == 6
+
+    # Alerts: WAT dropped from 100 to 30 (~70pt) -> alert.
+    # CALM dropped from 100 to 95 (~5pt) -> no alert.
+    alerts = iv_rank_alerts(conn, drop_threshold=10.0, lookback_days=10)
+    symbols_alerted = {a["symbol"] for a in alerts}
+    assert "WAT" in symbols_alerted
+    assert "CALM" not in symbols_alerted
+    wat = next(a for a in alerts if a["symbol"] == "WAT")
+    assert wat["drop_pct"] > 10.0
+
+    # Higher threshold -> no alerts.
+    empty = iv_rank_alerts(conn, drop_threshold=90.0, lookback_days=10)
+    assert empty == []
+
+
+def test_capture_iv_ranks_idempotent(conn):
+    from datetime import datetime, timedelta, timezone
+    from options_earnings.db.repo import capture_iv_ranks
+
+    repo.upsert_symbol(conn, _sym(symbol="A", price=100.0))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    j = repo.create_job(conn, ["A"], window_size=5)
+    repo.insert_quotes(conn, [QuoteRow(
+        job_id=j, symbol="A", snapshot_ts=now, underlying=100.0,
+        expiry=date(2026, 12, 31), strike=100.0, cp="C",
+        bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+        iv_yahoo=0.24, iv_computed=0.25,
+    )])
+    n1 = capture_iv_ranks(conn, ["A"], now)
+    n2 = capture_iv_ranks(conn, ["A"], now)
+    assert n1 == 1 and n2 == 1
+    count = conn.execute("SELECT COUNT(*) FROM iv_rank_history").fetchone()[0]
+    assert count == 1  # ON CONFLICT DO UPDATE — still 1 row
+
+
 def test_list_symbols_atm_iv_pct_2w(conn):
     """ATM IV %% 2W = (current - min) / (max - min) * 100 over the 14d window."""
     from datetime import datetime, timedelta, timezone

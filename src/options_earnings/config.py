@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     iv_monitor_timezone: str = "America/New_York"
     iv_monitor_batch_size: int = 15
 
+    iv_rank_alert_drop_threshold: float = 10.0
+    iv_rank_alert_lookback_days: int = 10
+
     daily_candles_enabled: bool = True
     daily_candles_cron: str = "*/10 * * * *"
     daily_candles_batch_size: int = 10

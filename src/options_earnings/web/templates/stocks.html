@@ -6,6 +6,16 @@
     <th><a href="/?page=1&{{ qs_base }}&sort={{ key }}&dir={{ d }}">{{ label }}{% if sort == key %} ({{ dir }}){% endif %}</a></th>
 {% endmacro %}
 {% block content %}
+{% if iv_alerts %}
+<div style="background:#fff4d1;border:1px solid #e6c65b;border-radius:4px;padding:.5em .75em;margin-bottom:.75em;font-size:.9em;">
+    <b style="color:#8a5a00;">IV Rank alerts</b> ({{ iv_alerts|length }})
+    <ul style="margin:.25em 0 0 1.2em;padding:0;">
+    {% for a in iv_alerts %}
+        <li>Watch <a href="/symbols/{{ a.symbol }}/candles"><b>{{ a.symbol }}</b></a> with IV Rank dropping <b>{{ '%.0f'|format(a.drop_pct) }}%</b> from maximum of the last {{ iv_alert_lookback_days }} days (now {{ '%.0f'|format(a.current_rank) }}%, was {{ '%.0f'|format(a.max_rank) }}%)</li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
 <h1>Stocks ({{ total }})</h1>
 {% if candles_progress and candles_progress.total %}
 {% set cp = candles_progress %}

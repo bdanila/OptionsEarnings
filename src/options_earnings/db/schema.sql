@@ -66,3 +66,12 @@ CREATE TABLE IF NOT EXISTS earnings_ohlc (
     PRIMARY KEY (symbol, trading_day)
 );
 CREATE INDEX IF NOT EXISTS ix_earnings_ohlc_symbol ON earnings_ohlc(symbol);
+
+CREATE TABLE IF NOT EXISTS iv_rank_history (
+    symbol       VARCHAR NOT NULL,
+    snapshot_ts  TIMESTAMP NOT NULL,
+    atm_iv       DOUBLE,
+    iv_rank_2w   DOUBLE,
+    PRIMARY KEY (symbol, snapshot_ts)
+);
+CREATE INDEX IF NOT EXISTS ix_iv_rank_history_symbol_ts ON iv_rank_history(symbol, snapshot_ts);

@@ -142,6 +142,11 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
             range_3m_min=range_3m_min_value, range_3m_max=range_3m_max_value,
         )
         candles_progress = repo.daily_candles_progress(c)
+        iv_alerts = repo.iv_rank_alerts(
+            c,
+            drop_threshold=settings.iv_rank_alert_drop_threshold,
+            lookback_days=settings.iv_rank_alert_lookback_days,
+        )
         total_pages = max(1, ceil(total / size)) if size else 1
         next_dir = "desc" if dir == "asc" else "asc"
         return templates.TemplateResponse(
@@ -164,6 +169,8 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
                 "range_3m_min": range_3m_min or "",
                 "range_3m_max": range_3m_max or "",
                 "candles_progress": candles_progress,
+                "iv_alerts": iv_alerts,
+                "iv_alert_lookback_days": settings.iv_rank_alert_lookback_days,
             },
         )
 
