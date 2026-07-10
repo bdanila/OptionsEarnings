@@ -397,6 +397,37 @@ def test_capture_iv_ranks_and_alerts(conn):
     assert empty == []
 
 
+def test_backfill_iv_rank_history_rolling_window(conn):
+    from datetime import datetime, timedelta, timezone
+    from options_earnings.db.repo import backfill_iv_rank_history
+
+    repo.upsert_symbol(conn, _sym(symbol="A", price=100.0))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def _snap(days_ago, iv):
+        ts = now - timedelta(days=days_ago)
+        j = repo.create_job(conn, ["A"], window_size=5)
+        repo.insert_quotes(conn, [QuoteRow(
+            job_id=j, symbol="A", snapshot_ts=ts, underlying=100.0,
+            expiry=date(2026, 12, 31), strike=100.0, cp="C",
+            bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+            iv_yahoo=iv - 0.01, iv_computed=iv,
+        )])
+
+    _snap(5, 0.20)
+    _snap(3, 0.30)
+    _snap(1, 0.25)  # rank = (0.25 - 0.20) / (0.30 - 0.20) * 100 = 50
+
+    n = backfill_iv_rank_history(conn)
+    assert n == 3
+
+    rows = conn.execute(
+        "SELECT iv_rank_2w FROM iv_rank_history WHERE symbol='A' "
+        "ORDER BY snapshot_ts DESC LIMIT 1"
+    ).fetchone()
+    assert abs(rows[0] - 50.0) < 1e-6
+
+
 def test_capture_iv_ranks_idempotent(conn):
     from datetime import datetime, timedelta, timezone
     from options_earnings.db.repo import capture_iv_ranks

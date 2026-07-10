@@ -291,6 +291,53 @@ def capture_iv_ranks(
     return len(result)
 
 
+def backfill_iv_rank_history(conn: duckdb.DuckDBPyConnection) -> int:
+    """Recompute ``iv_rank_history`` from every ATM Call snapshot in
+    ``option_quotes`` using a 14-day rolling min/max window. Idempotent via
+    ON CONFLICT DO UPDATE — safe to re-run. Returns the row count written.
+    """
+    result = conn.execute(
+        """
+        WITH ranked AS (
+            SELECT symbol, snapshot_ts,
+                   COALESCE(iv_computed, iv_yahoo) AS iv,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY symbol, snapshot_ts
+                       ORDER BY ABS(strike - underlying) ASC, strike ASC
+                   ) AS rk
+            FROM option_quotes WHERE cp = 'C'
+        ), per_snapshot AS (
+            SELECT symbol, snapshot_ts, iv AS atm_iv
+            FROM ranked WHERE rk = 1 AND iv IS NOT NULL
+        ), with_stats AS (
+            SELECT symbol, snapshot_ts, atm_iv,
+                   MIN(atm_iv) OVER (
+                       PARTITION BY symbol
+                       ORDER BY snapshot_ts
+                       RANGE BETWEEN INTERVAL 14 DAY PRECEDING AND CURRENT ROW
+                   ) AS min_iv,
+                   MAX(atm_iv) OVER (
+                       PARTITION BY symbol
+                       ORDER BY snapshot_ts
+                       RANGE BETWEEN INTERVAL 14 DAY PRECEDING AND CURRENT ROW
+                   ) AS max_iv
+            FROM per_snapshot
+        )
+        INSERT INTO iv_rank_history (symbol, snapshot_ts, atm_iv, iv_rank_2w)
+        SELECT symbol, snapshot_ts, atm_iv,
+               CASE WHEN max_iv > min_iv
+                    THEN (atm_iv - min_iv) / (max_iv - min_iv) * 100.0
+                    ELSE NULL END
+        FROM with_stats
+        ON CONFLICT (symbol, snapshot_ts) DO UPDATE SET
+            atm_iv = excluded.atm_iv,
+            iv_rank_2w = excluded.iv_rank_2w
+        RETURNING symbol
+        """
+    ).fetchall()
+    return len(result)
+
+
 def iv_rank_alerts(
     conn: duckdb.DuckDBPyConnection,
     *,

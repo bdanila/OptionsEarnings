@@ -50,6 +50,15 @@ def _cmd_refresh_missing(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_backfill_iv_rank(args: argparse.Namespace) -> int:
+    from options_earnings.db.repo import backfill_iv_rank_history
+    settings = get_settings()
+    with get_conn(settings.db_path) as conn:
+        n = backfill_iv_rank_history(conn)
+    print(f"Backfilled iv_rank_history with {n} rows.")
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
     settings = get_settings()
@@ -100,6 +109,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_rm.add_argument("--workers", type=int, default=4)
     p_rm.add_argument("--retries", type=int, default=2)
     p_rm.set_defaults(func=_cmd_refresh_missing)
+
+    p_bi = sub.add_parser(
+        "backfill-iv-rank",
+        help="Recompute iv_rank_history from every snapshot in option_quotes (one-off; idempotent)",
+    )
+    p_bi.set_defaults(func=_cmd_backfill_iv_rank)
 
     p_serve = sub.add_parser("serve", help="Start the FastAPI web app")
     p_serve.add_argument("--host", default=None, help="Bind host (default from settings)")
