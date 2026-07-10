@@ -53,6 +53,7 @@
             {{ hdr('Range 3M %', 'range_3m_pct') }}
             {{ hdr('Mkt Cap', 'market_cap') }}
             {{ hdr('ATM IV', 'atm_iv') }}
+            {{ hdr('ATM IV % 2W', 'atm_iv_pct_2w') }}
             <th>IV Monitored</th>
             {{ hdr('Earnings', 'next_earnings') }}
         </tr>
@@ -69,6 +70,7 @@
             <td>{% if r.range_3m_pct is not none %}{{ '%.2f'|format(r.range_3m_pct) }}%{% endif %}</td>
             <td>{{ r.market_cap|human_mcap }}</td>
             <td>{% if r.atm_iv is not none %}{{ '%.1f'|format(r.atm_iv * 100) }}%{% endif %}</td>
+            <td>{% if r.atm_iv_pct_2w is not none %}<span style="color:{% if r.atm_iv_pct_2w >= 66 %}#a00{% elif r.atm_iv_pct_2w <= 33 %}#0a0{% else %}#666{% endif %};">{{ '%.0f'|format(r.atm_iv_pct_2w) }}%</span>{% endif %}</td>
             <td style="text-align:center;">{% if r.iv_monitored %}<span title="monitored" style="color:#0a0;">&#10003;</span>{% else %}<span style="color:#ccc;">&ndash;</span>{% endif %}</td>
             <td>{{ r.next_earnings or '' }}{% if r.earnings_when %} ({{ r.earnings_when }}){% endif %}</td>
         </tr>

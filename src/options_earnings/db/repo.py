@@ -35,6 +35,7 @@ class SymbolRow:
     min_3m_pct: float | None = None
     max_3m_pct: float | None = None
     range_3m_pct: float | None = None
+    atm_iv_pct_2w: float | None = None
 
 
 @dataclass
@@ -106,6 +107,7 @@ _SORTABLE_SYMBOL_COLS = {
     "min_3m_pct": "min_3m_pct",
     "max_3m_pct": "max_3m_pct",
     "range_3m_pct": "range_3m_pct",
+    "atm_iv_pct_2w": "atm_iv_pct_2w",
 }
 
 
@@ -129,6 +131,21 @@ _ATM_IV_CTE = """
         SELECT symbol, MIN(low) AS min_3m, MAX(high) AS max_3m
         FROM earnings_ohlc
         WHERE trading_day >= CURRENT_DATE - 90
+        GROUP BY symbol
+    ), atm_iv_2w_ranked AS (
+        SELECT q.symbol, q.snapshot_ts,
+               COALESCE(q.iv_computed, q.iv_yahoo) AS iv,
+               ROW_NUMBER() OVER (
+                   PARTITION BY q.symbol, q.snapshot_ts
+                   ORDER BY ABS(q.strike - q.underlying) ASC, q.strike ASC
+               ) AS rk
+        FROM option_quotes q
+        WHERE q.cp = 'C'
+          AND q.snapshot_ts >= CURRENT_TIMESTAMP - INTERVAL 14 DAY
+    ), atm_iv_2w AS (
+        SELECT symbol, MIN(iv) AS min_iv_2w, MAX(iv) AS max_iv_2w
+        FROM atm_iv_2w_ranked
+        WHERE rk = 1 AND iv IS NOT NULL
         GROUP BY symbol
     )
 """
@@ -264,10 +281,16 @@ def list_symbols(
                CASE WHEN s.last_price > 0 AND st.max_3m IS NOT NULL
                     THEN (st.max_3m - s.last_price) / s.last_price * 100.0
                     ELSE NULL END AS max_3m_pct,
-               {_RANGE_3M_EXPR} AS range_3m_pct
+               {_RANGE_3M_EXPR} AS range_3m_pct,
+               CASE WHEN a.iv IS NOT NULL AND iv2w.max_iv_2w IS NOT NULL
+                    AND iv2w.min_iv_2w IS NOT NULL
+                    AND (iv2w.max_iv_2w - iv2w.min_iv_2w) > 0
+                    THEN (a.iv - iv2w.min_iv_2w) / (iv2w.max_iv_2w - iv2w.min_iv_2w) * 100.0
+                    ELSE NULL END AS atm_iv_pct_2w
         FROM symbols s
         LEFT JOIN atm a ON a.symbol = s.symbol
         LEFT JOIN stats_3m st ON st.symbol = s.symbol
+        LEFT JOIN atm_iv_2w iv2w ON iv2w.symbol = s.symbol
         {where_sql}
         ORDER BY {col} {direction} NULLS LAST, s.symbol ASC
         LIMIT ? OFFSET ?

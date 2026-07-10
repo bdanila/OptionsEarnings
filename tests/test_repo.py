@@ -316,6 +316,64 @@ def test_daily_candles_progress(conn):
     assert p["latest_day"] == today
 
 
+def test_list_symbols_atm_iv_pct_2w(conn):
+    """ATM IV %% 2W = (current - min) / (max - min) * 100 over the 14d window."""
+    from datetime import datetime, timedelta, timezone
+
+    repo.upsert_symbol(conn, _sym(symbol="A", price=100.0))
+    repo.upsert_symbol(conn, _sym(symbol="B", price=100.0))
+    repo.upsert_symbol(conn, _sym(symbol="C", price=100.0))  # no quotes
+
+    # Three snapshots for A: IV 20%, 30%, 25% (latest). Current at 25 -> 50%
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    def _q(symbol, hours_ago, iv, strike=100.0):
+        ts = now - timedelta(hours=hours_ago)
+        j = repo.create_job(conn, [symbol], window_size=5)
+        return QuoteRow(
+            job_id=j, symbol=symbol, snapshot_ts=ts, underlying=100.0,
+            expiry=date(2026, 12, 31), strike=strike, cp="C",
+            bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+            iv_yahoo=iv - 0.01, iv_computed=iv,
+        )
+    repo.insert_quotes(conn, [
+        _q("A", hours_ago=72, iv=0.20),   # 3 days ago
+        _q("A", hours_ago=48, iv=0.30),   # 2 days ago
+        _q("A", hours_ago=1,  iv=0.25),   # latest -> current a.iv
+    ])
+
+    # B: 20% -> 30%, current 29% -> 90%
+    repo.insert_quotes(conn, [
+        _q("B", hours_ago=72, iv=0.20),
+        _q("B", hours_ago=48, iv=0.30),
+        _q("B", hours_ago=1,  iv=0.29),
+    ])
+
+    rows, _ = repo.list_symbols(conn)
+    by = {r.symbol: r for r in rows}
+    assert abs(by["A"].atm_iv_pct_2w - 50.0) < 1e-6
+    assert abs(by["B"].atm_iv_pct_2w - 90.0) < 1e-6
+    assert by["C"].atm_iv_pct_2w is None  # no quotes
+
+
+def test_list_symbols_atm_iv_pct_2w_null_when_flat(conn):
+    """If min == max (only one snapshot), percentile is NULL."""
+    from datetime import datetime, timedelta, timezone
+
+    repo.upsert_symbol(conn, _sym(symbol="A", price=100.0))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    j = repo.create_job(conn, ["A"], window_size=5)
+    repo.insert_quotes(conn, [QuoteRow(
+        job_id=j, symbol="A", snapshot_ts=now - timedelta(hours=1),
+        underlying=100.0, expiry=date(2026, 12, 31), strike=100.0, cp="C",
+        bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+        iv_yahoo=0.24, iv_computed=0.25,
+    )])
+    rows, _ = repo.list_symbols(conn)
+    a = next(r for r in rows if r.symbol == "A")
+    assert a.atm_iv is not None
+    assert a.atm_iv_pct_2w is None  # single snapshot -> flat range -> NULL
+
+
 def test_list_symbols_returns_atm_iv_and_can_sort(conn):
     repo.upsert_symbol(conn, _sym(symbol="A", price=100.0))
     repo.upsert_symbol(conn, _sym(symbol="B", price=100.0))
