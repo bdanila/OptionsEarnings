@@ -36,6 +36,7 @@ class SymbolRow:
     max_3m_pct: float | None = None
     range_3m_pct: float | None = None
     atm_iv_pct_2w: float | None = None
+    days_to_earnings: int | None = None
 
 
 @dataclass
@@ -108,6 +109,7 @@ _SORTABLE_SYMBOL_COLS = {
     "max_3m_pct": "max_3m_pct",
     "range_3m_pct": "range_3m_pct",
     "atm_iv_pct_2w": "atm_iv_pct_2w",
+    "days_to_earnings": "days_to_earnings",
 }
 
 
@@ -507,7 +509,10 @@ def list_symbols(
                     AND iv2w.min_iv_2w IS NOT NULL
                     AND (iv2w.max_iv_2w - iv2w.min_iv_2w) > 0
                     THEN (a.iv - iv2w.min_iv_2w) / (iv2w.max_iv_2w - iv2w.min_iv_2w) * 100.0
-                    ELSE NULL END AS atm_iv_pct_2w
+                    ELSE NULL END AS atm_iv_pct_2w,
+               CASE WHEN s.next_earnings IS NOT NULL
+                    THEN CAST(s.next_earnings - CURRENT_DATE AS INTEGER)
+                    ELSE NULL END AS days_to_earnings
         FROM symbols s
         LEFT JOIN atm a ON a.symbol = s.symbol
         LEFT JOIN stats_3m st ON st.symbol = s.symbol

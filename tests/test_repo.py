@@ -200,6 +200,39 @@ def test_list_symbols_filter_iv_monitored(conn):
     assert any_total == 3
 
 
+def test_list_symbols_days_to_earnings(conn):
+    from datetime import date, timedelta
+    today = date.today()
+
+    future = SymbolRow(
+        symbol="A", company_name="A Co", sector="Tech", market_cap=1_000_000_000,
+        last_price=10.0, next_earnings=today + timedelta(days=5),
+        earnings_when=None, refreshed_at=datetime(2026, 7, 13, 12, 0),
+    )
+    past = SymbolRow(
+        symbol="B", company_name="B Co", sector="Tech", market_cap=1_000_000_000,
+        last_price=10.0, next_earnings=today - timedelta(days=3),
+        earnings_when=None, refreshed_at=datetime(2026, 7, 13, 12, 0),
+    )
+    unknown = SymbolRow(
+        symbol="C", company_name="C Co", sector="Tech", market_cap=1_000_000_000,
+        last_price=10.0, next_earnings=None,
+        earnings_when=None, refreshed_at=datetime(2026, 7, 13, 12, 0),
+    )
+    for r in (future, past, unknown):
+        repo.upsert_symbol(conn, r)
+
+    rows, _ = repo.list_symbols(conn, sort="symbol")
+    by = {r.symbol: r for r in rows}
+    assert by["A"].days_to_earnings == 5
+    assert by["B"].days_to_earnings == -3
+    assert by["C"].days_to_earnings is None
+
+    # Sort ASC — past dates come first (most negative), NULL last
+    sorted_rows, _ = repo.list_symbols(conn, sort="days_to_earnings", dir_="asc")
+    assert [r.symbol for r in sorted_rows] == ["B", "A", "C"]
+
+
 def test_list_symbols_returns_3m_stats_and_can_sort(conn):
     from options_earnings.db.repo import OHLCRow, upsert_ohlc
 

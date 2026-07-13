@@ -114,6 +114,7 @@
             {{ hdr('ATM IV', 'atm_iv') }}
             {{ hdr('ATM IV % 2W', 'atm_iv_pct_2w') }}
             <th>IV Monitored</th>
+            {{ hdr('Days', 'days_to_earnings') }}
             {{ hdr('Earnings', 'next_earnings') }}
         </tr>
     </thead>
@@ -131,6 +132,7 @@
             <td>{% if r.atm_iv is not none %}{{ '%.1f'|format(r.atm_iv * 100) }}%{% endif %}</td>
             <td>{% if r.atm_iv_pct_2w is not none %}<span style="color:{% if r.atm_iv_pct_2w >= 66 %}#a00{% elif r.atm_iv_pct_2w <= 33 %}#0a0{% else %}#666{% endif %};">{{ '%.0f'|format(r.atm_iv_pct_2w) }}%</span>{% endif %}</td>
             <td style="text-align:center;">{% if r.iv_monitored %}<span title="monitored" style="color:#0a0;">&#10003;</span>{% else %}<span style="color:#ccc;">&ndash;</span>{% endif %}</td>
+            <td style="text-align:right;{% if r.days_to_earnings is not none and r.days_to_earnings < 0 %}color:#999;{% endif %}">{% if r.days_to_earnings is not none %}{{ r.days_to_earnings }}{% endif %}</td>
             <td style="white-space:nowrap;">{{ r.next_earnings or '' }}{% if r.earnings_when %} ({{ r.earnings_when }}){% endif %}</td>
         </tr>
         {% endfor %}
