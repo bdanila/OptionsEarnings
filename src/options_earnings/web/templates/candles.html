@@ -3,11 +3,15 @@
 {% block content %}
 <h1>{{ symbol }} &mdash; {{ sym_row.company_name }}</h1>
 <p style="margin-bottom:1em;">
-    <a href="/">&larr; back to stocks</a>
+    <a href="{{ back_href }}">&larr; back to stocks</a>
     {% if sym_row.last_price is not none %} &middot; Last: <b>{{ '%.2f'|format(sym_row.last_price) }}</b>{% endif %}
     {% if sym_row.market_cap is not none %} &middot; Mkt Cap: {{ sym_row.market_cap|human_mcap }}{% endif %}
     {% if sym_row.next_earnings %} &middot; Next earnings: <b>{{ sym_row.next_earnings }}</b>{% endif %}
     &middot; <a href="/symbols/{{ symbol }}/iv-history">IV history</a>
+    &middot; <form action="/jobs" method="post" style="display:inline;">
+        <input type="hidden" name="symbols" value="{{ symbol }}">
+        <button type="submit" style="background:none;border:none;color:#06c;padding:0;font:inherit;cursor:pointer;text-decoration:underline;">Follow Option Chain</button>
+      </form>
     &middot; <a href="https://www.tradingview.com/chart/WrZaSQaL/?symbol={{ symbol|urlencode }}" target="_blank" rel="noopener noreferrer">TradingView &rarr;</a>
     &middot; <a href="https://seekingalpha.com/symbol/{{ symbol|urlencode }}" target="_blank" rel="noopener noreferrer">Seeking Alpha &rarr;</a>
 </p>

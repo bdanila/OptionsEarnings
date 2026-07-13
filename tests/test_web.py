@@ -243,6 +243,45 @@ def test_candles_page_has_external_links(conn, client):
     assert 'rel="noopener noreferrer"' in body
 
 
+def test_candles_page_back_link_preserves_referer(conn, client):
+    repo.upsert_symbol(conn, _sym("AAPL"))
+    # Same-origin Referer with filter params
+    ref = "http://testserver/?q=aapl&min_mcap=1B&sort=atm_iv&dir=desc"
+    r = client.get("/symbols/AAPL/candles", headers={"Referer": ref})
+    body = r.text
+    # Jinja HTML-escapes & to &amp; in href.
+    ref_escaped = ref.replace("&", "&amp;")
+    assert f'href="{ref_escaped}"' in body
+
+
+def test_candles_page_back_link_defaults_to_root(conn, client):
+    repo.upsert_symbol(conn, _sym("AAPL"))
+    r = client.get("/symbols/AAPL/candles")  # no referer
+    body = r.text
+    assert 'href="/"' in body
+
+
+def test_candles_page_back_link_rejects_external_referer(conn, client):
+    repo.upsert_symbol(conn, _sym("AAPL"))
+    r = client.get(
+        "/symbols/AAPL/candles",
+        headers={"Referer": "https://evil.example.com/oops"},
+    )
+    body = r.text
+    # External referer must not become the back link
+    assert 'href="/"' in body
+    assert 'href="https://evil.example.com/oops"' not in body
+
+
+def test_candles_page_has_follow_option_chain_form(conn, client):
+    repo.upsert_symbol(conn, _sym("AAPL"))
+    r = client.get("/symbols/AAPL/candles")
+    body = r.text
+    assert 'action="/jobs"' in body and 'method="post"' in body
+    assert 'name="symbols" value="AAPL"' in body
+    assert "Follow Option Chain" in body
+
+
 def test_candles_page_no_data(conn, client):
     repo.upsert_symbol(conn, _sym("XXX"))
     r = client.get("/symbols/XXX/candles")

@@ -434,6 +434,10 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
             if r.open is not None and r.high is not None
             and r.low is not None and r.close is not None
         ]
+        # Preserve the stocks-page filter when the user came from there.
+        ref = request.headers.get("referer") or ""
+        origin = str(request.base_url).rstrip("/")
+        back_href = ref if ref.startswith(origin + "/") or ref.startswith("/") else "/"
         return templates.TemplateResponse(
             request,
             "candles.html",
@@ -442,6 +446,7 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
                 "sym_row": sym_row,
                 "candles": candles,
                 "days": days,
+                "back_href": back_href,
             },
         )
 
