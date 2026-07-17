@@ -1,70 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Stocks{% endblock %}
-{% set qs_base = 'size=' ~ size ~ '&q=' ~ (q|urlencode) ~ '&min_mcap=' ~ (min_mcap_input|urlencode) ~ '&earnings_from=' ~ (earnings_from|urlencode) ~ '&earnings_to=' ~ (earnings_to|urlencode) ~ '&iv_monitored=' ~ (iv_monitored|urlencode) ~ '&range_3m_min=' ~ (range_3m_min|urlencode) ~ '&range_3m_max=' ~ (range_3m_max|urlencode) ~ '&alert_lookback=' ~ (iv_alert_lookback_days|string) %}
+{% set qs_base = 'size=' ~ size ~ '&q=' ~ (q|urlencode) ~ '&min_mcap=' ~ (min_mcap_input|urlencode) ~ '&earnings_from=' ~ (earnings_from|urlencode) ~ '&earnings_to=' ~ (earnings_to|urlencode) ~ '&iv_monitored=' ~ (iv_monitored|urlencode) ~ '&range_3m_min=' ~ (range_3m_min|urlencode) ~ '&range_3m_max=' ~ (range_3m_max|urlencode) %}
 {% macro hdr(label, key) %}
     {% set d = next_dir if sort == key else 'asc' %}
     <th><a href="/?page=1&{{ qs_base }}&sort={{ key }}&dir={{ d }}">{{ label }}{% if sort == key %} ({{ dir }}){% endif %}</a></th>
 {% endmacro %}
 {% block content %}
-<div style="background:#fff4d1;border:1px solid #e6c65b;border-radius:4px;padding:.5em .75em;margin-bottom:.75em;font-size:.9em;">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:1em;flex-wrap:wrap;">
-        <b style="color:#8a5a00;">IV Rank alerts{% if iv_alerts %} ({{ iv_alerts|length }}){% endif %}</b>
-        <form action="/" method="get" style="margin:0;">
-            <label>Lookback:
-                <input type="number" name="alert_lookback" value="{{ iv_alert_lookback_days }}" min="1" max="365" style="width:5em;">
-                days
-            </label>
-            <input type="hidden" name="sort" value="{{ sort }}">
-            <input type="hidden" name="dir" value="{{ dir }}">
-            <input type="hidden" name="size" value="{{ size }}">
-            <input type="hidden" name="q" value="{{ q }}">
-            <input type="hidden" name="min_mcap" value="{{ min_mcap_input }}">
-            <input type="hidden" name="earnings_from" value="{{ earnings_from }}">
-            <input type="hidden" name="earnings_to" value="{{ earnings_to }}">
-            <input type="hidden" name="iv_monitored" value="{{ iv_monitored }}">
-            <input type="hidden" name="range_3m_min" value="{{ range_3m_min }}">
-            <input type="hidden" name="range_3m_max" value="{{ range_3m_max }}">
-            <button type="submit">Apply</button>
-        </form>
-    </div>
-    {% if iv_alerts %}
-    <form action="/iv-alerts/dismiss" method="post" style="margin-top:.5em;">
-    <table style="margin:0;">
-        <thead><tr>
-            <th style="width:2em;"><input type="checkbox" id="alerts-select-all" title="Select all"></th>
-            <th>Time</th>
-            <th>Symbol</th>
-            <th>ATM IV</th>
-            <th>ATM IV Max Rank ({{ iv_alert_lookback_days }} days)</th>
-            <th>ATM IV Rank</th>
-        </tr></thead>
-        <tbody>
-        {% for a in iv_alerts %}
-            <tr>
-                <td style="text-align:center;"><input type="checkbox" name="alert" value="{{ a.symbol }}|{{ a.snapshot_ts.isoformat() }}"></td>
-                <td style="white-space:nowrap;">{{ a.snapshot_ts.strftime('%Y-%m-%d %H:%M') }}</td>
-                <td><a href="/symbols/{{ a.symbol }}/candles"><b>{{ a.symbol }}</b></a></td>
-                <td>{% if a.atm_iv is not none %}{{ '%.1f'|format(a.atm_iv * 100) }}%{% endif %}</td>
-                <td>{{ '%.0f'|format(a.max_rank) }}%</td>
-                <td style="color:#a00;">{{ '%.0f'|format(a.current_rank) }}%</td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    <div style="margin-top:.5em;"><button type="submit">Delete Selected</button></div>
-    </form>
-    <script>
-    (function(){
-        var sel = document.getElementById('alerts-select-all');
-        if (sel) sel.addEventListener('change', function(e){
-            document.querySelectorAll('input[type="checkbox"][name="alert"]').forEach(function(cb){ cb.checked = e.target.checked; });
-        });
-    })();
-    </script>
-    {% else %}
-    <div style="color:#8a5a00;margin-top:.25em;">No alerts.</div>
-    {% endif %}
-</div>
 <h1>Stocks ({{ total }})</h1>
 {% if candles_progress and candles_progress.total %}
 {% set cp = candles_progress %}

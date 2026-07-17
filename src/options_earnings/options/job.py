@@ -11,7 +11,6 @@ import yfinance as yf
 from options_earnings.config import get_settings
 from options_earnings.db.connection import get_conn
 from options_earnings.db.repo import (
-    capture_iv_ranks,
     get_job,
     get_symbol,
     insert_quotes,
@@ -62,7 +61,6 @@ def run_chain_job(
             snapshot_ts = datetime.now(timezone.utc).replace(tzinfo=None)
             errors: list[str] = []
             successes = 0
-            successful_symbols: list[str] = []
             for symbol in job.symbols:
                 if target_expiry is not None:
                     per_symbol_target = target_expiry
@@ -81,7 +79,6 @@ def run_chain_job(
                     )
                     insert_quotes(conn, quotes)
                     successes += 1
-                    successful_symbols.append(symbol)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("chain fetch failed for %s", symbol)
                     errors.append(f"{symbol}: {exc}")
@@ -95,12 +92,6 @@ def run_chain_job(
                     upsert_ohlc(conn, ohlc_rows)
                 except Exception:  # noqa: BLE001
                     logger.exception("earnings move computation failed for %s", symbol)
-
-            if successful_symbols:
-                try:
-                    capture_iv_ranks(conn, successful_symbols, snapshot_ts)
-                except Exception:  # noqa: BLE001
-                    logger.exception("iv rank capture failed")
 
             if successes == 0 and errors:
                 update_job_status(conn, job_id, "error", error=", ".join(errors))

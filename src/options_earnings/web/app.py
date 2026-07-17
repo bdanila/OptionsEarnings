@@ -118,7 +118,6 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
         iv_monitored: str | None = None,
         range_3m_min: str | None = None,
         range_3m_max: str | None = None,
-        alert_lookback: int | None = None,
     ) -> HTMLResponse:
         page = max(1, page)
         size = size or settings.page_size
@@ -143,15 +142,6 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
             range_3m_min=range_3m_min_value, range_3m_max=range_3m_max_value,
         )
         candles_progress = repo.daily_candles_progress(c)
-        effective_lookback = (
-            alert_lookback if alert_lookback and alert_lookback > 0
-            else settings.iv_rank_alert_lookback_days
-        )
-        iv_alerts = repo.iv_rank_alerts(
-            c,
-            drop_threshold=settings.iv_rank_alert_drop_threshold,
-            lookback_days=effective_lookback,
-        )
         total_pages = max(1, ceil(total / size)) if size else 1
         next_dir = "desc" if dir == "asc" else "asc"
         return templates.TemplateResponse(
@@ -174,8 +164,6 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
                 "range_3m_min": range_3m_min or "",
                 "range_3m_max": range_3m_max or "",
                 "candles_progress": candles_progress,
-                "iv_alerts": iv_alerts,
-                "iv_alert_lookback_days": effective_lookback,
             },
         )
 
@@ -198,26 +186,6 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
                 run_chain_job, str(settings.db_path), job_id,
                 window=settings.option_chain_window,
             )
-        return RedirectResponse(url=_back_to_referrer(request), status_code=303)
-
-    @app.post("/iv-alerts/dismiss")
-    def post_dismiss_iv_alerts(
-        request: Request,
-        c: Conn,
-        alert: Annotated[list[str], Form()] = [],
-    ) -> RedirectResponse:
-        entries: list[tuple[str, date]] = []
-        for a in alert:
-            try:
-                sym, ts_str = a.split("|", 1)
-                # snapshot_ts arrives as ISO datetime string
-                from datetime import datetime as _dt
-                ts = _dt.fromisoformat(ts_str)
-                entries.append((sym, ts))
-            except (ValueError, TypeError):
-                continue
-        if entries:
-            repo.dismiss_iv_alerts(c, entries)
         return RedirectResponse(url=_back_to_referrer(request), status_code=303)
 
     @app.post("/monitor-iv/stop")
