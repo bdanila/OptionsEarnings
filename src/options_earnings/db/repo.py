@@ -937,6 +937,31 @@ def daily_candles_progress(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     }
 
 
+def earnings_freshness(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Coverage snapshot for the stored ``next_earnings`` dates, used by the
+    UI pill next to the "Update earnings" button.
+
+    "upcoming" = a date in the future (today counts). "past" = a date that has
+    already gone by, i.e. a stale row nobody re-fetched after the report.
+    """
+    row = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE next_earnings IS NULL) AS missing,
+            COUNT(*) FILTER (WHERE next_earnings < CURRENT_DATE) AS past,
+            COUNT(*) FILTER (WHERE next_earnings >= CURRENT_DATE) AS upcoming
+        FROM symbols
+        """
+    ).fetchone()
+    return {
+        "total": int(row[0] or 0),
+        "missing": int(row[1] or 0),
+        "past": int(row[2] or 0),
+        "upcoming": int(row[3] or 0),
+    }
+
+
 def expiries_for_symbol(conn: duckdb.DuckDBPyConnection, symbol: str) -> list[date]:
     rows = conn.execute(
         "SELECT DISTINCT expiry FROM option_quotes WHERE symbol = ? ORDER BY expiry ASC",

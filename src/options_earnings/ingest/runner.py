@@ -45,23 +45,53 @@ def _fetch_one(constituent: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def refresh_missing_earnings(
+def stale_earnings_symbols(
+    conn: duckdb.DuckDBPyConnection, *, scope: str = "stale"
+) -> list[str]:
+    """Symbols whose ``next_earnings`` needs a re-fetch.
+
+    ``scope`` is one of:
+      * ``"missing"`` – only rows with a NULL ``next_earnings``
+      * ``"stale"``   – NULL *or* a date that already passed (the default)
+      * ``"all"``     – every symbol, regardless of the stored date
+    """
+    if scope == "all":
+        where = ""
+    elif scope == "missing":
+        where = "WHERE next_earnings IS NULL"
+    elif scope == "stale":
+        where = "WHERE next_earnings IS NULL OR next_earnings < CURRENT_DATE"
+    else:
+        raise ValueError(f"unknown scope: {scope!r}")
+    rows = conn.execute(f"SELECT symbol FROM symbols {where} ORDER BY symbol").fetchall()
+    return [r[0] for r in rows]
+
+
+def refresh_earnings_dates(
     conn: duckdb.DuckDBPyConnection,
     *,
+    scope: str = "stale",
     max_workers: int = 4,
     retries: int = 2,
     base_delay: float = 0.5,
-) -> int:
-    """For every row in ``symbols`` whose ``next_earnings`` is NULL, re-try
-    ``fetch_next_earnings`` with limited concurrency and a small retry+backoff
-    to dodge yfinance rate limiting. Returns count of rows updated.
+) -> tuple[int, int]:
+    """Re-fetch ``next_earnings`` for the symbols selected by ``scope``.
+
+    Uses limited concurrency and a small retry+backoff to dodge yfinance rate
+    limiting. Only non-NULL fetch results are written, so a failed lookup never
+    wipes a date we already have. Returns ``(updated, candidates)`` where
+    ``updated`` counts rows whose stored date actually changed.
     """
-    rows = conn.execute(
-        "SELECT symbol FROM symbols WHERE next_earnings IS NULL ORDER BY symbol"
-    ).fetchall()
-    symbols = [r[0] for r in rows]
+    symbols = stale_earnings_symbols(conn, scope=scope)
     if not symbols:
-        return 0
+        return 0, 0
+
+    current: dict[str, Any] = {
+        r[0]: r[1]
+        for r in conn.execute(
+            "SELECT symbol, next_earnings FROM symbols"
+        ).fetchall()
+    }
 
     def _try(sym: str) -> tuple[Any, Any]:
         for attempt in range(retries + 1):
@@ -84,7 +114,7 @@ def refresh_missing_earnings(
             try:
                 d, when = fut.result()
             except Exception as e:  # noqa: BLE001
-                logger.warning("refresh_missing_earnings worker failed for %s: %s", sym, e)
+                logger.warning("refresh_earnings_dates worker failed for %s: %s", sym, e)
                 continue
             results.append((sym, d, when))
 
@@ -98,8 +128,32 @@ def refresh_missing_earnings(
             "WHERE symbol = ?",
             [d, when, now, sym],
         )
-        updated += 1
-    logger.info("refresh_missing_earnings: updated %d / %d symbols", updated, len(symbols))
+        if current.get(sym) != d:
+            updated += 1
+    logger.info(
+        "refresh_earnings_dates(scope=%s): changed %d / %d symbols",
+        scope, updated, len(symbols),
+    )
+    return updated, len(symbols)
+
+
+def refresh_missing_earnings(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    max_workers: int = 4,
+    retries: int = 2,
+    base_delay: float = 0.5,
+) -> int:
+    """Backwards-compatible wrapper: re-fetch only the NULL ``next_earnings``
+    rows. Returns count of rows updated.
+    """
+    updated, _ = refresh_earnings_dates(
+        conn,
+        scope="missing",
+        max_workers=max_workers,
+        retries=retries,
+        base_delay=base_delay,
+    )
     return updated
 
 

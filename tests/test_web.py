@@ -616,3 +616,58 @@ def test_iv_history_json_rolling_atm(conn, client):
     assert len(data) == 3
     # Closest strike per snapshot: 170, 180, 190.
     assert [d["strike"] for d in data] == [170.0, 180.0, 190.0]
+
+
+def test_stocks_page_shows_earnings_freshness_and_button(client, conn) -> None:
+    today = date.today()
+    for sym, ne in [
+        ("PAST", today - timedelta(days=5)),
+        ("SOON", today + timedelta(days=5)),
+        ("NONE", None),
+    ]:
+        row = _sym(sym)
+        repo.upsert_symbol(
+            conn,
+            SymbolRow(**{**row.__dict__, "symbol": sym, "next_earnings": ne}),
+        )
+    html = client.get("/").text
+    assert "Earnings dates:" in html
+    assert "1 past due" in html
+    assert "1 missing" in html
+    assert 'action="/refresh-earnings"' in html
+
+
+def test_post_refresh_earnings_dispatches_background_task(
+    client, conn, monkeypatch
+) -> None:
+    from contextlib import contextmanager
+
+    from options_earnings.db import connection as db_connection
+    from options_earnings.ingest import runner
+
+    @contextmanager
+    def fake_get_conn(path):
+        yield conn
+
+    calls: list[str] = []
+
+    def fake_refresh(bg_conn, *, scope="stale", **kwargs):
+        assert bg_conn is conn
+        calls.append(scope)
+        return 0, 0
+
+    monkeypatch.setattr(db_connection, "get_conn", fake_get_conn)
+    monkeypatch.setattr(runner, "refresh_earnings_dates", fake_refresh)
+
+    resp = client.post("/refresh-earnings", data={"scope": "stale"})
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+    assert calls == ["stale"]
+
+    resp = client.post("/refresh-earnings", data={"scope": "all"})
+    assert resp.status_code == 303
+    assert calls == ["stale", "all"]
+
+
+def test_post_refresh_earnings_rejects_bad_scope(client) -> None:
+    assert client.post("/refresh-earnings", data={"scope": "bogus"}).status_code == 400

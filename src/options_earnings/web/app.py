@@ -142,6 +142,7 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
             range_3m_min=range_3m_min_value, range_3m_max=range_3m_max_value,
         )
         candles_progress = repo.daily_candles_progress(c)
+        earnings_freshness = repo.earnings_freshness(c)
         total_pages = max(1, ceil(total / size)) if size else 1
         next_dir = "desc" if dir == "asc" else "asc"
         return templates.TemplateResponse(
@@ -164,6 +165,7 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
                 "range_3m_min": range_3m_min or "",
                 "range_3m_max": range_3m_max or "",
                 "candles_progress": candles_progress,
+                "earnings_freshness": earnings_freshness,
             },
         )
 
@@ -464,6 +466,27 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
 
         background_tasks.add_task(_run_refresh)
         return RedirectResponse(url="/", status_code=303)
+
+    @app.post("/refresh-earnings")
+    def post_refresh_earnings(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        scope: Annotated[str, Form()] = "stale",
+    ) -> RedirectResponse:
+        """Re-fetch next_earnings for symbols whose date is missing or already
+        past (scope=stale, the default), or for every symbol (scope=all)."""
+        if scope not in ("stale", "all", "missing"):
+            raise HTTPException(status_code=400, detail="invalid scope")
+
+        from options_earnings.db.connection import get_conn as _get_conn
+        from options_earnings.ingest.runner import refresh_earnings_dates
+
+        def _run() -> None:
+            with _get_conn(settings.db_path) as bg_conn:
+                refresh_earnings_dates(bg_conn, scope=scope)
+
+        background_tasks.add_task(_run)
+        return RedirectResponse(url=_back_to_referrer(request), status_code=303)
 
     return app
 

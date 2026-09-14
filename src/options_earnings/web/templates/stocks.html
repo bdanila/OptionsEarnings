@@ -17,6 +17,18 @@
     {% if cp.with_data < cp.total %} &middot; <span style="color:#a60;">{{ cp.total - cp.with_data }} never fetched</span>{% endif %}
 </div>
 {% endif %}
+{% if earnings_freshness and earnings_freshness.total %}
+{% set ef = earnings_freshness %}
+<div style="font-size:.85em;color:#666;margin-bottom:.5em;">
+    Earnings dates: <b>{{ ef.upcoming }}</b> / {{ ef.total }} upcoming
+    {% if ef.past %} &middot; <span style="color:#a60;">{{ ef.past }} past due</span>{% endif %}
+    {% if ef.missing %} &middot; <span style="color:#a60;">{{ ef.missing }} missing</span>{% endif %}
+    <form action="/refresh-earnings" method="post" style="display:inline;margin-left:.5em;">
+        <button type="submit" name="scope" value="stale" title="Re-fetch next earnings for the {{ ef.past + ef.missing }} symbols whose date is past due or missing">Update earnings dates</button>
+        <button type="submit" name="scope" value="all" title="Re-fetch next earnings for all {{ ef.total }} symbols (slow)">All</button>
+    </form>
+</div>
+{% endif %}
 <form action="/" method="get" class="filters" style="margin-bottom:.75em;">
     <label>Search: <input type="text" name="q" value="{{ q }}" placeholder="symbol or company"></label>
     <label>Min Mkt Cap: <input type="text" name="min_mcap" value="{{ min_mcap_input }}" placeholder="e.g. 10B, 500M"></label>

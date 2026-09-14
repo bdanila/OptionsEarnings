@@ -8,8 +8,8 @@ from options_earnings.config import get_settings
 from options_earnings.db.connection import get_conn
 from options_earnings.ingest.runner import (
     refresh_all,
+    refresh_earnings_dates,
     refresh_missing_data,
-    refresh_missing_earnings,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,10 +33,10 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
 def _cmd_refresh_earnings(args: argparse.Namespace) -> int:
     settings = get_settings()
     with get_conn(settings.db_path) as conn:
-        n = refresh_missing_earnings(
-            conn, max_workers=args.workers, retries=args.retries
+        n, candidates = refresh_earnings_dates(
+            conn, scope=args.scope, max_workers=args.workers, retries=args.retries
         )
-    print(f"Refilled earnings for {n} symbols.")
+    print(f"Updated earnings for {n} of {candidates} symbols (scope={args.scope}).")
     return 0
 
 
@@ -96,7 +96,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_re = sub.add_parser(
         "refresh-earnings",
-        help="Retry earnings fetch for symbols with NULL next_earnings (low concurrency, with retry)",
+        help="Re-fetch next_earnings for stale/missing symbols (low concurrency, with retry)",
+    )
+    p_re.add_argument(
+        "--scope", choices=("stale", "missing", "all"), default="stale",
+        help="stale = missing or already past (default); missing = NULL only; all = every symbol",
     )
     p_re.add_argument("--workers", type=int, default=4)
     p_re.add_argument("--retries", type=int, default=2)

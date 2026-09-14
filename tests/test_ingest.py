@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -133,5 +133,119 @@ def test_refresh_all_respects_limit(monkeypatch: pytest.MonkeyPatch) -> None:
 
         total = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         assert total == 2
+    finally:
+        conn.close()
+
+
+def _sym_row(sym: str, ne: date | None) -> repo.SymbolRow:
+    from datetime import datetime
+    return repo.SymbolRow(
+        symbol=sym, company_name=sym, sector="Tech",
+        market_cap=1_000_000_000, last_price=10.0,
+        next_earnings=ne, earnings_when=None,
+        refreshed_at=datetime(2026, 5, 12, 12, 0),
+    )
+
+
+def test_stale_earnings_symbols_scopes() -> None:
+    conn = open_memory()
+    try:
+        today = date.today()
+        for sr in [
+            _sym_row("NONE", None),
+            _sym_row("PAST", today - timedelta(days=3)),
+            _sym_row("TODAY", today),
+            _sym_row("FUTURE", today + timedelta(days=30)),
+        ]:
+            repo.upsert_symbol(conn, sr)
+        assert runner.stale_earnings_symbols(conn, scope="missing") == ["NONE"]
+        assert runner.stale_earnings_symbols(conn, scope="stale") == ["NONE", "PAST"]
+        assert runner.stale_earnings_symbols(conn, scope="all") == [
+            "FUTURE", "NONE", "PAST", "TODAY",
+        ]
+        with pytest.raises(ValueError):
+            runner.stale_earnings_symbols(conn, scope="bogus")
+    finally:
+        conn.close()
+
+
+def test_refresh_earnings_dates_updates_stale_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = open_memory()
+    try:
+        today = date.today()
+        future = today + timedelta(days=30)
+        for sr in [
+            _sym_row("NONE", None),
+            _sym_row("PAST", today - timedelta(days=3)),
+            _sym_row("FUTURE", future),
+        ]:
+            repo.upsert_symbol(conn, sr)
+
+        called: list[str] = []
+        new_date = today + timedelta(days=45)
+
+        def fake_earnings(sym: str) -> tuple[date | None, str | None]:
+            called.append(sym)
+            return new_date, "AMC"
+
+        monkeypatch.setattr(runner, "fetch_next_earnings", fake_earnings)
+
+        updated, candidates = runner.refresh_earnings_dates(conn, max_workers=2)
+        assert (updated, candidates) == (2, 2)
+        assert sorted(called) == ["NONE", "PAST"]
+
+        assert repo.get_symbol(conn, "NONE").next_earnings == new_date
+        assert repo.get_symbol(conn, "PAST").next_earnings == new_date
+        assert repo.get_symbol(conn, "PAST").earnings_when == "AMC"
+        # untouched: its date is still in the future
+        assert repo.get_symbol(conn, "FUTURE").next_earnings == future
+    finally:
+        conn.close()
+
+
+def test_refresh_earnings_dates_keeps_old_date_when_fetch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = open_memory()
+    try:
+        past = date.today() - timedelta(days=2)
+        repo.upsert_symbol(conn, _sym_row("PAST", past))
+
+        def fake_earnings(sym: str) -> tuple[date | None, str | None]:
+            return None, None
+
+        monkeypatch.setattr(runner, "fetch_next_earnings", fake_earnings)
+
+        updated, candidates = runner.refresh_earnings_dates(
+            conn, retries=0, max_workers=1
+        )
+        assert (updated, candidates) == (0, 1)
+        assert repo.get_symbol(conn, "PAST").next_earnings == past
+    finally:
+        conn.close()
+
+
+def test_refresh_earnings_dates_scope_all_counts_only_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = open_memory()
+    try:
+        keep = date.today() + timedelta(days=10)
+        repo.upsert_symbol(conn, _sym_row("SAME", keep))
+        repo.upsert_symbol(conn, _sym_row("MOVED", date.today() + timedelta(days=20)))
+        moved_to = date.today() + timedelta(days=25)
+
+        def fake_earnings(sym: str) -> tuple[date | None, str | None]:
+            return (keep if sym == "SAME" else moved_to), "BMO"
+
+        monkeypatch.setattr(runner, "fetch_next_earnings", fake_earnings)
+
+        updated, candidates = runner.refresh_earnings_dates(
+            conn, scope="all", max_workers=2
+        )
+        assert (updated, candidates) == (1, 2)
+        assert repo.get_symbol(conn, "MOVED").next_earnings == moved_to
     finally:
         conn.close()
