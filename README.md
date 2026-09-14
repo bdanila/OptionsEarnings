@@ -9,6 +9,9 @@ A local Python workbench for spotting earnings-driven options setups in the S&P 
 - IV history chart (Chart.js) per symbol — rolling-ATM or fixed-strike
 - Optional scheduler (APScheduler) auto-refreshes chains for names with upcoming earnings
 
+> **Operating the system?** See [OPERATIONS.md](OPERATIONS.md) — start/stop, refreshing
+> data, shipping a change, deploying to the droplet, the database, and troubleshooting.
+
 ## Quickstart (Windows / PowerShell or bash)
 
 ```bash
