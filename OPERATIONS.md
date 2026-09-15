@@ -231,8 +231,48 @@ Both installations run these (APScheduler, in-process). Defaults from
 |---|---|---|
 | Watchlist chain refresh | hourly, Mon–Fri (UTC) | Pulls chains for symbols reporting within 14 days |
 | Large-cap chain refresh | 22:00 UTC, Mon–Fri | Pulls chains for every symbol with mcap ≥ 200B |
-| IV monitor | every 10 min, Mon–Fri, NY time | Round-robin over IV-monitored symbols, 15 per tick, most-stale first |
+| IV monitor | every 10 min, Mon–Fri, NY time | Round-robin over IV-monitored symbols, most-overdue first, two-speed (below) |
 | Daily candles | every 10 min | Backfills OHLC in batches of 10 symbols, 90-day lookback; skips weekends |
+
+### The two-speed IV monitor
+
+Each tick takes the `IV_MONITOR_BATCH_SIZE` most *overdue* monitored symbols,
+ranked by `age ÷ target interval` rather than raw age:
+
+- market cap ≥ `IV_MONITOR_TIER1_MCAP` (100B) → target `IV_MONITOR_TIER1_HOURS` (24h)
+- everything else → target `IV_MONITOR_TIER2_HOURS` (48h)
+
+So a large cap 25h old (ratio 1.04) outranks a small cap 25h old (0.52), but a
+small cap neglected for 200h (4.2) beats them both. That last property is
+deliberate — a hard tier priority would starve the small caps entirely.
+
+Capacity at batch 8 every 10 min is ~48 symbols/hour, ~1150/weekday. The 117
+large caps plus 393 others need ~314/day, so there is roughly 3.7x headroom.
+
+**Watch out for the tier pill going backwards.** Right after a long outage the
+ranking drains the deepest backlog first, which can be the 48h tier, and the
+24h tier temporarily loses ground. That is the ratio working as intended; it
+settles within a few hours.
+
+### Dead tickers
+
+A symbol yfinance can't resolve (delisted, or no listed options) returns an
+empty chain — not an error. Before Sept 2026 that meant its last-snapshot
+timestamp never advanced, so a queue ordered by snapshot age re-picked it
+every single tick, forever. Seven such tickers were eating 7 of every 8 slots
+and throughput had collapsed to ~14 symbols/hour against a capacity of 48.
+
+The queue now orders by the later of last snapshot and `iv_last_attempt_at`,
+so a barren symbol rotates to the back like any other. `iv_consecutive_failures`
+counts them, and the scheduler warns once a symbol has failed 5+ times running:
+
+```bash
+journalctl -u options-earnings | grep "failed 5+"
+journalctl -u options-earnings | grep "no data for"
+```
+
+Symbols that show up there permanently are worth un-ticking from **Monitor IV** —
+they no longer block anything, but they still burn one slot per cycle.
 
 Nothing here refreshes **earnings dates** — that's why they go stale and why the
 **Update earnings dates** button exists. Run it every few weeks, or whenever the *past due*
@@ -297,7 +337,9 @@ constantly is not a great fit for that. Don't rely on it.
 | `LARGE_CAP_CHAIN_THRESHOLD` | `200000000000` | same | "Large cap" cutoff, in dollars |
 | `SCHEDULER_*` | enabled | enabled | Watchlist chain refresh |
 | `LARGE_CAP_SCHEDULER_*` | enabled | enabled | Nightly large-cap chains |
-| `IV_MONITOR_*` | enabled | enabled | Intraday IV polling; `BATCH_SIZE` symbols per tick |
+| `IV_MONITOR_*` | enabled | enabled | Intraday IV polling; `BATCH_SIZE` symbols per tick, `WORKERS` fetched in parallel |
+| `IV_MONITOR_TIER1_MCAP` | `100000000000` | same | Cutoff between the 24h and 48h refresh targets |
+| `IV_MONITOR_TIER1_HOURS` / `TIER2_HOURS` | `24` / `48` | same | Refresh target per tier |
 | `DAILY_CANDLES_*` | enabled | enabled | OHLC backfill; `BATCH_SIZE`, `LOOKBACK_DAYS` |
 | `IV_RANK_ALERT_*` | `10.0` / `10` | same | IV-rank drop threshold and lookback |
 
@@ -337,6 +379,22 @@ stuck — just create a new job. Check `journalctl` / terminal output for the re
 `journalctl -u options-earnings -n 100`. Usual causes: a bad `.env` edit, or a new dependency
 that didn't install. Roll back with `git -C /opt/options-earnings reset --hard <prev-sha>`
 followed by a restart.
+
+**A scheduled job never runs on some weekday**
+Check the day-of-week spelling. APScheduler numbers days 0=Monday while
+standard crontab numbers them 0=Sunday, and `from_crontab` does not translate,
+so a raw `1-5` means Tue–Sat. `scheduler.crontab_trigger()` now converts
+numeric tokens for you, but prefer the unambiguous `mon-fri` in any `.env`.
+The startup line prints every live cron:
+
+```bash
+journalctl -u options-earnings | grep "scheduler: started"
+```
+
+**The app logs nothing at INFO**
+Uvicorn configures only its own loggers. `configure_logging()` in
+`web/app.py` attaches a root handler at startup; set `LOG_LEVEL=DEBUG` in
+`.env` and restart for more detail.
 
 **Nothing is updating on prod but the site is up**
 Check the schedulers actually started: `journalctl -u options-earnings | grep "scheduler: started"`.
