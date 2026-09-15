@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from options_earnings.db import repo
 from options_earnings.db.repo import JobRow, QuoteRow, SymbolRow
@@ -899,3 +899,103 @@ def test_expiries_for_symbol(conn):
     ])
     expiries = repo.expiries_for_symbol(conn, "AAPL")
     assert expiries == [date(2026, 5, 2), date(2026, 5, 9), date(2026, 5, 16)]
+
+
+def _mon_sym(sym: str, mcap: float | None, monitored: bool = True) -> SymbolRow:
+    return SymbolRow(
+        symbol=sym, company_name=sym, sector="Tech",
+        market_cap=mcap, last_price=100.0,
+        next_earnings=None, earnings_when=None,
+        refreshed_at=datetime(2026, 9, 15, 12, 0),
+    )
+
+
+def _snap(conn, sym: str, hours_ago: float, job_id) -> None:
+    ts = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours_ago)
+    repo.insert_quotes(conn, [QuoteRow(
+        job_id=job_id, symbol=sym, snapshot_ts=ts, underlying=100.0,
+        expiry=date(2026, 10, 16), strike=100.0, cp="C",
+        bid=1.0, ask=1.1, last=1.05, volume=10, open_interest=10,
+        iv_yahoo=0.2, iv_computed=0.2,
+    )])
+
+
+def test_stale_iv_monitored_prioritises_large_caps(conn) -> None:
+    """A 100B+ name one day stale outranks a small cap one day stale, because
+    its target interval is half as long."""
+    big, small = 150_000_000_000.0, 10_000_000_000.0
+    for sym, mcap in [("BIG", big), ("SMALL", small)]:
+        repo.upsert_symbol(conn, _mon_sym(sym, mcap))
+        repo.set_iv_monitored(conn, [sym], True)
+    job_id = repo.create_job(conn, ["BIG", "SMALL"], window_size=20)
+    _snap(conn, "BIG", 25, job_id)
+    _snap(conn, "SMALL", 25, job_id)
+
+    picked = repo.stale_iv_monitored_symbols(
+        conn, 1, tier1_mcap=100_000_000_000.0, tier1_hours=24, tier2_hours=48
+    )
+    assert picked == ["BIG"]
+
+
+def test_stale_iv_monitored_neglected_small_cap_eventually_wins(conn) -> None:
+    """Tiering is a ratio, not a hard priority: a small cap far past its own
+    48h target beats a large cap only slightly past 24h."""
+    for sym, mcap in [("BIG", 150_000_000_000.0), ("SMALL", 10_000_000_000.0)]:
+        repo.upsert_symbol(conn, _mon_sym(sym, mcap))
+        repo.set_iv_monitored(conn, [sym], True)
+    job_id = repo.create_job(conn, ["BIG", "SMALL"], window_size=20)
+    _snap(conn, "BIG", 25, job_id)      # 25/24 = 1.04 overdue
+    _snap(conn, "SMALL", 200, job_id)   # 200/48 = 4.2 overdue
+
+    picked = repo.stale_iv_monitored_symbols(
+        conn, 1, tier1_mcap=100_000_000_000.0, tier1_hours=24, tier2_hours=48
+    )
+    assert picked == ["SMALL"]
+
+
+def test_stale_iv_monitored_never_fetched_comes_first(conn) -> None:
+    for sym, mcap in [("BIG", 150_000_000_000.0), ("NEW", 5_000_000_000.0)]:
+        repo.upsert_symbol(conn, _mon_sym(sym, mcap))
+        repo.set_iv_monitored(conn, [sym], True)
+    job_id = repo.create_job(conn, ["BIG"], window_size=20)
+    _snap(conn, "BIG", 500, job_id)
+
+    picked = repo.stale_iv_monitored_symbols(
+        conn, 1, tier1_mcap=100_000_000_000.0, tier1_hours=24, tier2_hours=48
+    )
+    assert picked == ["NEW"]
+
+
+def test_stale_iv_monitored_untiered_is_plain_oldest_first(conn) -> None:
+    for sym, mcap in [("BIG", 150_000_000_000.0), ("SMALL", 1_000_000_000.0)]:
+        repo.upsert_symbol(conn, _mon_sym(sym, mcap))
+        repo.set_iv_monitored(conn, [sym], True)
+    job_id = repo.create_job(conn, ["BIG", "SMALL"], window_size=20)
+    _snap(conn, "BIG", 30, job_id)
+    _snap(conn, "SMALL", 40, job_id)
+
+    assert repo.stale_iv_monitored_symbols(conn, 1, tier1_mcap=None) == ["SMALL"]
+
+
+def test_iv_monitor_tier_status_counts_per_tier(conn) -> None:
+    for sym, mcap in [
+        ("BIGFRESH", 150_000_000_000.0),
+        ("BIGSTALE", 150_000_000_000.0),
+        ("SMLFRESH", 5_000_000_000.0),
+        ("SMLSTALE", 5_000_000_000.0),
+    ]:
+        repo.upsert_symbol(conn, _mon_sym(sym, mcap))
+        repo.set_iv_monitored(conn, [sym], True)
+    job_id = repo.create_job(conn, ["BIGFRESH"], window_size=20)
+    _snap(conn, "BIGFRESH", 2, job_id)
+    _snap(conn, "BIGSTALE", 40, job_id)
+    _snap(conn, "SMLFRESH", 30, job_id)
+    _snap(conn, "SMLSTALE", 100, job_id)
+
+    st = repo.iv_monitor_tier_status(
+        conn, tier1_mcap=100_000_000_000.0, tier1_hours=24, tier2_hours=48
+    )
+    assert st == {
+        "tier1_total": 2, "tier1_fresh": 1,
+        "tier2_total": 2, "tier2_fresh": 1,
+    }

@@ -14,6 +14,46 @@ from options_earnings.options.job import run_chain_job
 
 log = logging.getLogger(__name__)
 
+# Standard crontab numbers days 0=Sunday..6=Saturday; APScheduler's own
+# day_of_week field numbers them 0=Monday..6=Sunday, and
+# CronTrigger.from_crontab does NOT translate between the two. So a literal
+# "1-5" — which every config file here means as Mon-Fri — silently becomes
+# Tue-Sat: Monday never runs and Saturday runs instead. Map the numbers onto
+# APScheduler's day names, which are unambiguous in both conventions.
+_CRON_DOW_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _translate_dow(field: str) -> str:
+    """Rewrite numeric day-of-week tokens from standard-crontab numbering to
+    APScheduler day names. Names and ``*`` pass through untouched.
+    """
+    def _tok(tok: str) -> str:
+        if tok.isdigit() and 0 <= int(tok) <= 7:
+            return _CRON_DOW_NAMES[int(tok)]
+        return tok
+
+    out: list[str] = []
+    for part in field.split(","):
+        step = ""
+        if "/" in part:
+            part, _, step = part.partition("/")
+            step = "/" + step
+        if "-" in part and not part.startswith("-"):
+            lo, _, hi = part.partition("-")
+            out.append(f"{_tok(lo)}-{_tok(hi)}{step}")
+        else:
+            out.append(f"{_tok(part)}{step}")
+    return ",".join(out)
+
+
+def crontab_trigger(expr: str, timezone: str) -> CronTrigger:
+    """``CronTrigger.from_crontab`` with standard-crontab weekday semantics."""
+    fields = expr.split()
+    if len(fields) == 5:
+        fields[4] = _translate_dow(fields[4])
+        expr = " ".join(fields)
+    return CronTrigger.from_crontab(expr, timezone=timezone)
+
 
 def _watchlist_symbols(db_path: Path, days: int) -> list[str]:
     cutoff = date.today() + timedelta(days=days)
@@ -59,21 +99,39 @@ def _daily_candles_task(db_path: Path, batch_size: int, lookback_days: int) -> N
     )
 
 
-def _iv_monitor_task(db_path: Path, window: int, batch_size: int) -> None:
+def _iv_monitor_task(
+    db_path: Path,
+    window: int,
+    batch_size: int,
+    *,
+    tier1_mcap: float | None = None,
+    tier1_hours: float = 24.0,
+    tier2_hours: float = 48.0,
+    workers: int = 1,
+) -> None:
     """One tick of the round-robin IV monitor: pull option chains for the
-    ``batch_size`` most-stale IV-monitored symbols. Skips the earnings history
-    recompute (that data is quarterly, not hourly) so each tick makes ~3
-    yfinance calls per symbol instead of ~5.
+    ``batch_size`` most-overdue IV-monitored symbols, large caps first (see
+    ``repo.stale_iv_monitored_symbols``). Skips the earnings history recompute
+    (that data is quarterly, not hourly) so each tick makes ~3 yfinance calls
+    per symbol instead of ~5.
     """
     from options_earnings.options.job import run_chain_job
     with get_conn(db_path) as conn:
-        symbols = repo.stale_iv_monitored_symbols(conn, batch_size)
+        symbols = repo.stale_iv_monitored_symbols(
+            conn, batch_size,
+            tier1_mcap=tier1_mcap, tier1_hours=tier1_hours, tier2_hours=tier2_hours,
+        )
         if not symbols:
             log.info("scheduler: iv monitor — nothing monitored, skipping tick")
             return
         job_id = repo.create_job(conn, symbols, window_size=window)
-    log.info("scheduler: iv monitor tick — job %s for %d symbols", job_id, len(symbols))
-    run_chain_job(db_path, job_id, window=window, skip_earnings_history=True)
+    log.info(
+        "scheduler: iv monitor tick — job %s for %d symbols (%d workers)",
+        job_id, len(symbols), workers,
+    )
+    run_chain_job(
+        db_path, job_id, window=window, skip_earnings_history=True, workers=workers
+    )
 
 
 def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
@@ -83,7 +141,7 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
         _refresh_watchlist_chains,
-        trigger=CronTrigger.from_crontab(settings.scheduler_cron, timezone="UTC"),
+        trigger=crontab_trigger(settings.scheduler_cron, "UTC"),
         kwargs={
             "db_path": settings.db_path,
             "window": settings.option_chain_window,
@@ -97,7 +155,7 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
     if settings.large_cap_scheduler_enabled:
         scheduler.add_job(
             _refresh_large_cap_chains_task,
-            trigger=CronTrigger.from_crontab(settings.large_cap_scheduler_cron, timezone="UTC"),
+            trigger=crontab_trigger(settings.large_cap_scheduler_cron, "UTC"),
             kwargs={
                 "db_path": settings.db_path,
                 "threshold": settings.large_cap_chain_threshold,
@@ -111,7 +169,7 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
     if settings.daily_candles_enabled:
         scheduler.add_job(
             _daily_candles_task,
-            trigger=CronTrigger.from_crontab(settings.daily_candles_cron, timezone="UTC"),
+            trigger=crontab_trigger(settings.daily_candles_cron, "UTC"),
             kwargs={
                 "db_path": settings.db_path,
                 "batch_size": settings.daily_candles_batch_size,
@@ -125,13 +183,15 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
     if settings.iv_monitor_enabled:
         scheduler.add_job(
             _iv_monitor_task,
-            trigger=CronTrigger.from_crontab(
-                settings.iv_monitor_cron, timezone=settings.iv_monitor_timezone
-            ),
+            trigger=crontab_trigger(settings.iv_monitor_cron, settings.iv_monitor_timezone),
             kwargs={
                 "db_path": settings.db_path,
                 "window": settings.option_chain_window,
                 "batch_size": settings.iv_monitor_batch_size,
+                "tier1_mcap": settings.iv_monitor_tier1_mcap,
+                "tier1_hours": settings.iv_monitor_tier1_hours,
+                "tier2_hours": settings.iv_monitor_tier2_hours,
+                "workers": settings.iv_monitor_workers,
             },
             id="iv_monitor_hourly",
             replace_existing=True,

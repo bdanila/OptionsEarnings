@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -671,3 +671,27 @@ def test_post_refresh_earnings_dispatches_background_task(
 
 def test_post_refresh_earnings_rejects_bad_scope(client) -> None:
     assert client.post("/refresh-earnings", data={"scope": "bogus"}).status_code == 400
+
+
+def test_stocks_page_shows_iv_tier_pill(client, conn) -> None:
+    from options_earnings.db.repo import QuoteRow
+
+    for sym, mcap in [("MEGA", 500_000_000_000), ("TINY", 2_000_000_000)]:
+        row = _sym(sym)
+        repo.upsert_symbol(conn, SymbolRow(**{**row.__dict__,
+                                              "symbol": sym, "market_cap": mcap}))
+        repo.set_iv_monitored(conn, [sym], True)
+    job_id = repo.create_job(conn, ["MEGA"], window_size=20)
+    repo.insert_quotes(conn, [QuoteRow(
+        job_id=job_id, symbol="MEGA",
+        snapshot_ts=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1),
+        underlying=100.0, expiry=date(2026, 10, 16), strike=100.0, cp="C",
+        bid=1.0, ask=1.1, last=1.05, volume=1, open_interest=1,
+        iv_yahoo=0.2, iv_computed=0.2,
+    )])
+
+    html = client.get("/").text
+    assert "IV monitor" in html
+    assert "<b>1</b> / 1 within 24h" in html   # MEGA fresh in tier 1
+    assert "<b>0</b> / 1 within 48h" in html   # TINY never fetched
+    assert "(1 overdue)" in html

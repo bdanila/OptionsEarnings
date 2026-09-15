@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     iv_monitor_cron: str = "*/10 * * * 1-5"
     iv_monitor_timezone: str = "America/New_York"
     iv_monitor_batch_size: int = 15
+    # Two-speed round robin: symbols at or above the cutoff target a refresh
+    # every tier1 hours, everything else every tier2 hours.
+    iv_monitor_tier1_mcap: float = 100_000_000_000.0
+    iv_monitor_tier1_hours: float = 24.0
+    iv_monitor_tier2_hours: float = 48.0
+    # Symbols fetched in parallel inside one batch. The work is network-bound,
+    # so this is the main throughput lever; keep it modest to avoid yfinance
+    # rate limiting.
+    iv_monitor_workers: int = 4
 
     iv_rank_alert_drop_threshold: float = 10.0
     iv_rank_alert_lookback_days: int = 10

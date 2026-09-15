@@ -143,6 +143,15 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
         )
         candles_progress = repo.daily_candles_progress(c)
         earnings_freshness = repo.earnings_freshness(c)
+        iv_tiers = repo.iv_monitor_tier_status(
+            c,
+            tier1_mcap=settings.iv_monitor_tier1_mcap,
+            tier1_hours=settings.iv_monitor_tier1_hours,
+            tier2_hours=settings.iv_monitor_tier2_hours,
+        )
+        iv_tiers["tier1_hours"] = settings.iv_monitor_tier1_hours
+        iv_tiers["tier2_hours"] = settings.iv_monitor_tier2_hours
+        iv_tiers["tier1_mcap"] = settings.iv_monitor_tier1_mcap
         total_pages = max(1, ceil(total / size)) if size else 1
         next_dir = "desc" if dir == "asc" else "asc"
         return templates.TemplateResponse(
@@ -166,6 +175,7 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
                 "range_3m_max": range_3m_max or "",
                 "candles_progress": candles_progress,
                 "earnings_freshness": earnings_freshness,
+                "iv_tiers": iv_tiers,
             },
         )
 

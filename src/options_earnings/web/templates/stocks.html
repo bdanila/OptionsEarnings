@@ -17,6 +17,18 @@
     {% if cp.with_data < cp.total %} &middot; <span style="color:#a60;">{{ cp.total - cp.with_data }} never fetched</span>{% endif %}
 </div>
 {% endif %}
+{% if iv_tiers and (iv_tiers.tier1_total or iv_tiers.tier2_total) %}
+{% set t = iv_tiers %}
+<div style="font-size:.85em;color:#666;margin-bottom:.5em;">
+    IV monitor &mdash;
+    <b title="market cap &ge; {{ t.tier1_mcap|human_mcap }}">large cap</b>:
+    <b>{{ t.tier1_fresh }}</b> / {{ t.tier1_total }} within {{ t.tier1_hours|int }}h
+    {% if t.tier1_total - t.tier1_fresh %}<span style="color:#a60;">({{ t.tier1_total - t.tier1_fresh }} overdue)</span>{% endif %}
+    &middot; <b>rest</b>:
+    <b>{{ t.tier2_fresh }}</b> / {{ t.tier2_total }} within {{ t.tier2_hours|int }}h
+    {% if t.tier2_total - t.tier2_fresh %}<span style="color:#a60;">({{ t.tier2_total - t.tier2_fresh }} overdue)</span>{% endif %}
+</div>
+{% endif %}
 {% if earnings_freshness and earnings_freshness.total %}
 {% set ef = earnings_freshness %}
 <div style="font-size:.85em;color:#666;margin-bottom:.5em;">

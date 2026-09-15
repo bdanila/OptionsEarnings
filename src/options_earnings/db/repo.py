@@ -425,12 +425,42 @@ def dismiss_iv_alerts(
 
 
 def stale_iv_monitored_symbols(
-    conn: duckdb.DuckDBPyConnection, limit: int
+    conn: duckdb.DuckDBPyConnection,
+    limit: int,
+    *,
+    tier1_mcap: float | None = None,
+    tier1_hours: float = 24.0,
+    tier2_hours: float = 48.0,
 ) -> list[str]:
-    """Return the ``limit`` most-stale IV-monitored symbols (never fetched or
-    oldest snapshot first) for round-robin IV monitor batches. Ties broken by
-    symbol alphabetically for deterministic ordering.
+    """Return the ``limit`` most-overdue IV-monitored symbols for the next
+    round-robin batch.
+
+    Symbols are ranked by *overdue ratio* — how long since the last snapshot,
+    divided by that symbol's target refresh interval — so a large cap one day
+    old outranks a small cap one day old, but a badly neglected small cap
+    still eventually wins. Never-fetched symbols sort first.
+
+    ``tier1_mcap`` is the market-cap cutoff (in dollars) above which a symbol
+    gets the ``tier1_hours`` target; everything else gets ``tier2_hours``.
+    Passing ``None`` disables tiering and falls back to plain oldest-first.
     """
+    if tier1_mcap is None:
+        rows = conn.execute(
+            """
+            SELECT s.symbol
+            FROM symbols s
+            LEFT JOIN (
+                SELECT symbol, MAX(snapshot_ts) AS last_ts
+                FROM option_quotes GROUP BY symbol
+            ) q ON q.symbol = s.symbol
+            WHERE COALESCE(s.iv_monitored, FALSE) = TRUE
+            ORDER BY q.last_ts ASC NULLS FIRST, s.symbol ASC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+        return [r[0] for r in rows]
+
     rows = conn.execute(
         """
         SELECT s.symbol
@@ -440,12 +470,62 @@ def stale_iv_monitored_symbols(
             FROM option_quotes GROUP BY symbol
         ) q ON q.symbol = s.symbol
         WHERE COALESCE(s.iv_monitored, FALSE) = TRUE
-        ORDER BY q.last_ts ASC NULLS FIRST, s.symbol ASC
+        ORDER BY
+            CASE WHEN q.last_ts IS NULL THEN 1 ELSE 0 END DESC,
+            date_diff('second', q.last_ts, CURRENT_TIMESTAMP)
+                / (CASE WHEN s.market_cap IS NOT NULL AND s.market_cap >= ?
+                        THEN ? ELSE ? END) DESC,
+            s.symbol ASC
         LIMIT ?
         """,
-        [limit],
+        [tier1_mcap, tier1_hours * 3600.0, tier2_hours * 3600.0, limit],
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def iv_monitor_tier_status(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    tier1_mcap: float,
+    tier1_hours: float = 24.0,
+    tier2_hours: float = 48.0,
+) -> dict[str, Any]:
+    """Per-tier freshness of the IV-monitored set, for the UI pill: how many
+    symbols each tier holds and how many are inside their refresh target.
+    """
+    row = conn.execute(
+        """
+        WITH last AS (
+            SELECT s.symbol,
+                   CASE WHEN s.market_cap IS NOT NULL AND s.market_cap >= ?
+                        THEN 1 ELSE 2 END AS tier,
+                   q.last_ts
+            FROM symbols s
+            LEFT JOIN (
+                SELECT symbol, MAX(snapshot_ts) AS last_ts
+                FROM option_quotes GROUP BY symbol
+            ) q ON q.symbol = s.symbol
+            WHERE COALESCE(s.iv_monitored, FALSE) = TRUE
+        )
+        SELECT
+            COUNT(*) FILTER (WHERE tier = 1) AS t1_total,
+            COUNT(*) FILTER (WHERE tier = 1 AND last_ts IS NOT NULL
+                AND last_ts >= CURRENT_TIMESTAMP - INTERVAL (CAST(? AS BIGINT)) SECOND
+            ) AS t1_fresh,
+            COUNT(*) FILTER (WHERE tier = 2) AS t2_total,
+            COUNT(*) FILTER (WHERE tier = 2 AND last_ts IS NOT NULL
+                AND last_ts >= CURRENT_TIMESTAMP - INTERVAL (CAST(? AS BIGINT)) SECOND
+            ) AS t2_fresh
+        FROM last
+        """,
+        [tier1_mcap, int(tier1_hours * 3600), int(tier2_hours * 3600)],
+    ).fetchone()
+    return {
+        "tier1_total": int(row[0] or 0),
+        "tier1_fresh": int(row[1] or 0),
+        "tier2_total": int(row[2] or 0),
+        "tier2_fresh": int(row[3] or 0),
+    }
 
 
 def list_symbols(

@@ -35,7 +35,7 @@ services:
         value: "true"
         scope: RUN_AND_BUILD_TIME
       - key: SCHEDULER_CRON
-        value: "0 */1 * * 1-5"
+        value: "0 */1 * * mon-fri"
         scope: RUN_AND_BUILD_TIME
       - key: SCHEDULER_WATCHLIST_DAYS_TO_EARNINGS
         value: "14"
@@ -44,13 +44,13 @@ services:
         value: "true"
         scope: RUN_AND_BUILD_TIME
       - key: LARGE_CAP_SCHEDULER_CRON
-        value: "0 22 * * 1-5"
+        value: "0 22 * * mon-fri"
         scope: RUN_AND_BUILD_TIME
       - key: IV_MONITOR_ENABLED
         value: "true"
         scope: RUN_AND_BUILD_TIME
       - key: IV_MONITOR_CRON
-        value: "0 10-16 * * 1-5"
+        value: "0 10-16 * * mon-fri"
         scope: RUN_AND_BUILD_TIME
       - key: IV_MONITOR_TIMEZONE
         value: America/New_York

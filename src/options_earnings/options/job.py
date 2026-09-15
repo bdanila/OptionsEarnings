@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import yfinance as yf
@@ -50,6 +52,7 @@ def run_chain_job(
     target_expiry: date | None = None,
     risk_free_rate: float | None = None,
     skip_earnings_history: bool = False,
+    workers: int = 1,
 ) -> None:
     with get_conn(db_path) as conn:
         job = get_job(conn, job_id)
@@ -61,37 +64,73 @@ def run_chain_job(
             snapshot_ts = datetime.now(timezone.utc).replace(tzinfo=None)
             errors: list[str] = []
             successes = 0
+
+            # Resolve per-symbol expiries up front: these are DB reads, and
+            # the fetch below runs on worker threads that must not touch conn.
+            targets: dict[str, date | None] = {}
             for symbol in job.symbols:
                 if target_expiry is not None:
-                    per_symbol_target = target_expiry
+                    targets[symbol] = target_expiry
                 else:
                     sym_row = get_symbol(conn, symbol)
-                    per_symbol_target = sym_row.next_earnings if sym_row else None
+                    targets[symbol] = sym_row.next_earnings if sym_row else None
 
+            def _work(symbol: str) -> tuple[str, Any, Any]:
+                """Network-only half, safe to run in parallel. Returns
+                (symbol, quotes_or_exception, earnings_or_None)."""
                 try:
-                    quotes = fetch_chain_slice(
+                    quotes: Any = fetch_chain_slice(
                         symbol,
                         window=window,
-                        target_expiry=per_symbol_target,
+                        target_expiry=targets[symbol],
                         risk_free_rate=rate,
                         snapshot_ts=snapshot_ts,
                         job_id=job_id,
                     )
-                    insert_quotes(conn, quotes)
-                    successes += 1
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("chain fetch failed for %s", symbol)
-                    errors.append(f"{symbol}: {exc}")
+                    quotes = exc
+                earnings: Any = None
+                if not skip_earnings_history:
+                    try:
+                        earnings = compute_recent_earnings_data(symbol, n=8)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("earnings move computation failed for %s", symbol)
+                return symbol, quotes, earnings
 
-                if skip_earnings_history:
-                    continue
-                try:
-                    moves, ohlc_rows = compute_recent_earnings_data(symbol, n=8)
-                    for move in moves:
-                        upsert_earnings_move(conn, move)
-                    upsert_ohlc(conn, ohlc_rows)
-                except Exception:  # noqa: BLE001
-                    logger.exception("earnings move computation failed for %s", symbol)
+            n_workers = max(1, min(workers, len(job.symbols)))
+            if n_workers == 1:
+                results = [_work(s) for s in job.symbols]
+            else:
+                results = []
+                with ThreadPoolExecutor(max_workers=n_workers) as ex:
+                    futures = [ex.submit(_work, s) for s in job.symbols]
+                    for fut in as_completed(futures):
+                        try:
+                            results.append(fut.result())
+                        except Exception:  # noqa: BLE001
+                            logger.exception("chain worker crashed")
+
+            # All DB writes happen here, on the one thread that owns conn.
+            for symbol, quotes, earnings in results:
+                if isinstance(quotes, Exception):
+                    errors.append(f"{symbol}: {quotes}")
+                else:
+                    try:
+                        insert_quotes(conn, quotes)
+                        successes += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("insert_quotes failed for %s", symbol)
+                        errors.append(f"{symbol}: {exc}")
+                if earnings is not None:
+                    moves, ohlc_rows = earnings
+                    try:
+                        for move in moves:
+                            upsert_earnings_move(conn, move)
+                        upsert_ohlc(conn, ohlc_rows)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("earnings write failed for %s", symbol)
+            errors.sort()
 
             if successes == 0 and errors:
                 update_job_status(conn, job_id, "error", error=", ".join(errors))
