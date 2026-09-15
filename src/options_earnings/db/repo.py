@@ -424,6 +424,56 @@ def dismiss_iv_alerts(
     return len(payload)
 
 
+def record_iv_attempts(
+    conn: duckdb.DuckDBPyConnection,
+    attempted: list[str],
+    succeeded: list[str],
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Stamp an IV-monitor attempt against every symbol in ``attempted``.
+
+    Without this, a symbol that never yields quotes keeps its old (or NULL)
+    last-snapshot timestamp, stays at the head of the round-robin queue and
+    is retried every single tick — blocking the symbols behind it. Recording
+    the attempt rotates it to the back. ``iv_consecutive_failures`` resets on
+    success and increments otherwise, so dead tickers are visible.
+    """
+    if not attempted:
+        return
+    ts = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    ok = set(succeeded)
+    for sym in attempted:
+        if sym in ok:
+            conn.execute(
+                "UPDATE symbols SET iv_last_attempt_at = ?, "
+                "iv_consecutive_failures = 0 WHERE symbol = ?",
+                [ts, sym],
+            )
+        else:
+            conn.execute(
+                "UPDATE symbols SET iv_last_attempt_at = ?, "
+                "iv_consecutive_failures = COALESCE(iv_consecutive_failures, 0) + 1 "
+                "WHERE symbol = ?",
+                [ts, sym],
+            )
+
+
+def dead_iv_symbols(
+    conn: duckdb.DuckDBPyConnection, min_failures: int = 5
+) -> list[tuple[str, int]]:
+    """IV-monitored symbols that have failed ``min_failures`` times in a row —
+    almost always a delisted ticker or one with no listed options."""
+    rows = conn.execute(
+        "SELECT symbol, iv_consecutive_failures FROM symbols "
+        "WHERE COALESCE(iv_monitored, FALSE) = TRUE "
+        "  AND COALESCE(iv_consecutive_failures, 0) >= ? "
+        "ORDER BY iv_consecutive_failures DESC, symbol ASC",
+        [min_failures],
+    ).fetchall()
+    return [(r[0], int(r[1] or 0)) for r in rows]
+
+
 def stale_iv_monitored_symbols(
     conn: duckdb.DuckDBPyConnection,
     limit: int,
@@ -454,7 +504,10 @@ def stale_iv_monitored_symbols(
                 FROM option_quotes GROUP BY symbol
             ) q ON q.symbol = s.symbol
             WHERE COALESCE(s.iv_monitored, FALSE) = TRUE
-            ORDER BY q.last_ts ASC NULLS FIRST, s.symbol ASC
+            ORDER BY GREATEST(
+                COALESCE(q.last_ts, TIMESTAMP '1970-01-01'),
+                COALESCE(s.iv_last_attempt_at, TIMESTAMP '1970-01-01')
+            ) ASC, s.symbol ASC
             LIMIT ?
             """,
             [limit],
@@ -471,8 +524,12 @@ def stale_iv_monitored_symbols(
         ) q ON q.symbol = s.symbol
         WHERE COALESCE(s.iv_monitored, FALSE) = TRUE
         ORDER BY
-            CASE WHEN q.last_ts IS NULL THEN 1 ELSE 0 END DESC,
-            date_diff('second', q.last_ts, CURRENT_TIMESTAMP)
+            CASE WHEN q.last_ts IS NULL AND s.iv_last_attempt_at IS NULL
+                 THEN 1 ELSE 0 END DESC,
+            date_diff('second', GREATEST(
+                COALESCE(q.last_ts, TIMESTAMP '1970-01-01'),
+                COALESCE(s.iv_last_attempt_at, TIMESTAMP '1970-01-01')
+            ), CURRENT_TIMESTAMP)
                 / (CASE WHEN s.market_cap IS NOT NULL AND s.market_cap >= ?
                         THEN ? ELSE ? END) DESC,
             s.symbol ASC

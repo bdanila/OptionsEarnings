@@ -999,3 +999,50 @@ def test_iv_monitor_tier_status_counts_per_tier(conn) -> None:
         "tier1_total": 2, "tier1_fresh": 1,
         "tier2_total": 2, "tier2_fresh": 1,
     }
+
+
+def test_dead_ticker_does_not_block_the_queue(conn) -> None:
+    """The bug this guards: a symbol whose fetch never yields quotes keeps its
+    stale snapshot timestamp, so a queue ordered purely by snapshot age picks
+    it first on every single tick and starves everything behind it.
+    """
+    for sym in ["DEAD", "LIVE1", "LIVE2"]:
+        repo.upsert_symbol(conn, _mon_sym(sym, 5_000_000_000.0))
+        repo.set_iv_monitored(conn, [sym], True)
+    job_id = repo.create_job(conn, ["LIVE1", "LIVE2"], window_size=20)
+    _snap(conn, "LIVE1", 60, job_id)
+    _snap(conn, "LIVE2", 50, job_id)
+    # DEAD never produced a quote at all, so it is the most overdue.
+
+    first = repo.stale_iv_monitored_symbols(conn, 1, tier1_mcap=100_000_000_000.0)
+    assert first == ["DEAD"]
+
+    # The tick attempts it and gets nothing back.
+    repo.record_iv_attempts(conn, ["DEAD"], [])
+
+    # It must now rotate to the back instead of being picked again.
+    second = repo.stale_iv_monitored_symbols(conn, 1, tier1_mcap=100_000_000_000.0)
+    assert second == ["LIVE1"]
+    assert repo.stale_iv_monitored_symbols(
+        conn, 3, tier1_mcap=100_000_000_000.0
+    ) == ["LIVE1", "LIVE2", "DEAD"]
+
+
+def test_record_iv_attempts_tracks_consecutive_failures(conn) -> None:
+    for sym in ["DEAD", "FLAKY"]:
+        repo.upsert_symbol(conn, _mon_sym(sym, 5_000_000_000.0))
+        repo.set_iv_monitored(conn, [sym], True)
+
+    for _ in range(5):
+        repo.record_iv_attempts(conn, ["DEAD", "FLAKY"], ["FLAKY"])
+    assert repo.dead_iv_symbols(conn, min_failures=5) == [("DEAD", 5)]
+
+    repo.record_iv_attempts(conn, ["DEAD"], ["DEAD"])   # it recovers
+    assert repo.dead_iv_symbols(conn, min_failures=5) == []
+
+
+def test_record_iv_attempts_ignores_unmonitored_and_empty(conn) -> None:
+    repo.upsert_symbol(conn, _mon_sym("X", 1_000_000_000.0))
+    repo.record_iv_attempts(conn, [], [])          # no-op, must not raise
+    repo.record_iv_attempts(conn, ["X"], [])
+    assert repo.dead_iv_symbols(conn, min_failures=1) == []  # X is not monitored

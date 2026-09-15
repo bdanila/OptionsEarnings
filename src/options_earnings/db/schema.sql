@@ -9,6 +9,13 @@ CREATE TABLE IF NOT EXISTS symbols (
     refreshed_at   TIMESTAMP NOT NULL
 );
 ALTER TABLE symbols ADD COLUMN IF NOT EXISTS iv_monitored BOOLEAN;
+-- Round-robin bookkeeping for the IV monitor. A symbol whose chain fetch
+-- returns nothing (delisted ticker, no listed options) never updates its
+-- last snapshot, so ordering the queue purely by snapshot age pins it at the
+-- head forever and starves everything behind it. Recording every *attempt*
+-- rotates such symbols to the back like any other.
+ALTER TABLE symbols ADD COLUMN IF NOT EXISTS iv_last_attempt_at TIMESTAMP;
+ALTER TABLE symbols ADD COLUMN IF NOT EXISTS iv_consecutive_failures INTEGER;
 
 CREATE TABLE IF NOT EXISTS option_chain_jobs (
     job_id        UUID PRIMARY KEY,

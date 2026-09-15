@@ -118,3 +118,27 @@ def test_run_chain_job_sequential_still_works(
 
     job_mod.run_chain_job(db_path, job_id, window=20, skip_earnings_history=True)
     assert calls == ["AAA", "BBB", "CCC"]  # default workers=1 preserves order
+
+
+def test_run_chain_job_reports_symbols_that_produced_nothing(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty chain is not an exception — delisted tickers just return []. The
+    caller needs them distinguished from real successes to stop re-picking them.
+    """
+    def fake_fetch(symbol, *, window, target_expiry, risk_free_rate, snapshot_ts, job_id):
+        if symbol in ("BBB", "CCC"):
+            return []                      # delisted / no listed options
+        return [_quote(job_id, symbol, snapshot_ts)]
+
+    monkeypatch.setattr(job_mod, "fetch_chain_slice", fake_fetch)
+    monkeypatch.setattr(job_mod, "_resolve_risk_free_rate", lambda x: 0.05)
+
+    conn = open_db(db_path)
+    job_id = repo.create_job(conn, ["AAA", "BBB", "CCC", "DDD"], window_size=20)
+    conn.close()
+
+    produced = job_mod.run_chain_job(
+        db_path, job_id, window=20, skip_earnings_history=True, workers=2
+    )
+    assert sorted(produced) == ["AAA", "DDD"]

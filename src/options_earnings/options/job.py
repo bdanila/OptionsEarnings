@@ -53,7 +53,7 @@ def run_chain_job(
     risk_free_rate: float | None = None,
     skip_earnings_history: bool = False,
     workers: int = 1,
-) -> None:
+) -> list[str]:
     with get_conn(db_path) as conn:
         job = get_job(conn, job_id)
         if job is None:
@@ -63,6 +63,7 @@ def run_chain_job(
             rate = _resolve_risk_free_rate(risk_free_rate)
             snapshot_ts = datetime.now(timezone.utc).replace(tzinfo=None)
             errors: list[str] = []
+            produced: list[str] = []
             successes = 0
 
             # Resolve per-symbol expiries up front: these are DB reads, and
@@ -119,6 +120,13 @@ def run_chain_job(
                     try:
                         insert_quotes(conn, quotes)
                         successes += 1
+                        if quotes:
+                            produced.append(symbol)
+                        else:
+                            # Not an error, but nothing was stored: a delisted
+                            # ticker or one with no listed options. The caller
+                            # needs to know so it can stop re-picking it.
+                            logger.info("no quotes stored for %s", symbol)
                     except Exception as exc:  # noqa: BLE001
                         logger.exception("insert_quotes failed for %s", symbol)
                         errors.append(f"{symbol}: {exc}")
@@ -136,6 +144,7 @@ def run_chain_job(
                 update_job_status(conn, job_id, "error", error=", ".join(errors))
             else:
                 update_job_status(conn, job_id, "done", error=", ".join(errors) if errors else None)
+            return produced
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_chain_job failed")
             update_job_status(conn, job_id, "error", error=str(exc))

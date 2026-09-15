@@ -129,9 +129,27 @@ def _iv_monitor_task(
         "scheduler: iv monitor tick — job %s for %d symbols (%d workers)",
         job_id, len(symbols), workers,
     )
-    run_chain_job(
+    produced = run_chain_job(
         db_path, job_id, window=window, skip_earnings_history=True, workers=workers
     )
+    # Record the attempt for every symbol, not just the ones that yielded
+    # quotes: otherwise a ticker that never returns data keeps its stale
+    # timestamp, stays first in the queue and is retried every tick forever.
+    with get_conn(db_path) as conn:
+        repo.record_iv_attempts(conn, symbols, produced)
+        dead = repo.dead_iv_symbols(conn)
+    barren = sorted(set(symbols) - set(produced))
+    if barren:
+        log.warning(
+            "scheduler: iv monitor — no data for %d/%d symbols: %s",
+            len(barren), len(symbols), ", ".join(barren),
+        )
+    if dead:
+        log.warning(
+            "scheduler: %d IV-monitored symbols have failed 5+ times in a row "
+            "(likely delisted or no listed options): %s",
+            len(dead), ", ".join(f"{s}({n})" for s, n in dead[:15]),
+        )
 
 
 def start_scheduler(settings: Settings) -> BackgroundScheduler | None:
