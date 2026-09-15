@@ -695,3 +695,23 @@ def test_stocks_page_shows_iv_tier_pill(client, conn) -> None:
     assert "<b>1</b> / 1 within 24h" in html   # MEGA fresh in tier 1
     assert "<b>0</b> / 1 within 48h" in html   # TINY never fetched
     assert "(1 overdue)" in html
+
+
+def test_configure_logging_is_idempotent_and_enables_info(caplog) -> None:
+    import logging as _logging
+
+    from options_earnings.web.app import configure_logging
+
+    root = _logging.getLogger()
+    before = list(root.handlers)
+    try:
+        configure_logging("INFO")
+        configure_logging("INFO")
+        added = [h for h in root.handlers if getattr(h, "_oe_handler", False)]
+        assert len(added) == 1          # not stacked on repeat calls
+        assert root.level == _logging.INFO
+    finally:
+        for h in list(root.handlers):
+            if getattr(h, "_oe_handler", False):
+                root.removeHandler(h)
+        root.handlers[:] = before

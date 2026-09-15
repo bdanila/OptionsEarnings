@@ -1,3 +1,5 @@
+import logging
+import os
 from datetime import date
 from importlib import resources
 from math import ceil
@@ -504,8 +506,30 @@ def create_app(conn: duckdb.DuckDBPyConnection) -> FastAPI:
 _app: FastAPI | None = None
 
 
+def configure_logging(level: str | int = "INFO") -> None:
+    """Attach a stderr handler to the root logger.
+
+    Uvicorn only configures its own ``uvicorn.*`` loggers and leaves root
+    bare, so every ``options_earnings`` INFO record was being dropped —
+    scheduler ticks, per-symbol skips, job outcomes. Only WARNING+ made it
+    out, via logging's handler of last resort. That blindness hid a silent
+    failure for months, so the production app sets this up explicitly.
+    """
+    root = logging.getLogger()
+    if any(getattr(h, "_oe_handler", False) for h in root.handlers):
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(levelname)s %(name)s: %(message)s")
+    )
+    handler._oe_handler = True  # type: ignore[attr-defined]
+    root.addHandler(handler)
+    root.setLevel(level)
+
+
 def _build_production_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(os.environ.get("LOG_LEVEL", "INFO"))
     conn = open_db(settings.db_path)
     app = create_app(conn)
 
